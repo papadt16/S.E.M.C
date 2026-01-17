@@ -860,7 +860,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="/mqtt.min.js"></script>
 
     <script>
     
@@ -901,6 +901,19 @@
                 document.getElementById('account-balance').textContent = dashboardBalance;
             }
         }
+function updateDashboardValues(data) {
+  const bal = n(data.balance);
+  const vol = n(data.voltage);
+  const cur = n(data.current);
+  const pow = n(data.power);
+  const ene = n(data.energy);
+
+  updateElement('balance', (bal !== null ? bal.toFixed(2) : '--') + '<span class="unit">₦</span>');
+  updateElement('voltage', (vol !== null ? vol.toFixed(1) : '--') + '<span class="unit">V</span>');
+  updateElement('current', (cur !== null ? cur.toFixed(3) : '--') + '<span class="unit">A</span>');
+  updateElement('power',   (pow !== null ? pow.toFixed(1) : '--') + '<span class="unit">W</span>');
+  updateElement('energy-value', (ene !== null ? ene.toFixed(3) : '--') + ' kWh');
+}
 
         function handleTelemetry(data) {
            
@@ -1008,13 +1021,6 @@ function updateAccountSection(data) {
             updateElement('relay-control-status', relayStatusText);
         }
 
-
-        function updateAccountSection(data) {
-            updateElement('account-balance', data.balance.toFixed(2) + '<span class="unit">₦</span>');
-            // Example consumption rate calculation (needs actual logic)
-            const consumptionRate = (data.energy * data.costPerKWh).toFixed(2); // Example
-            updateElement('consumption-rate', consumptionRate + '<span class="unit">₦/day</span>'); // Needs proper daily calculation
-        }
 
        function updateControlSection(data) {
   // pull numeric values safely
