@@ -918,33 +918,33 @@
                   `Last Update: ${now.toLocaleTimeString()}`;
      }
 
-        function updateValues() {
-            fetch('/data')
-                .then(response => response.json())
-                .then(data => {
+       // (function updateValues() {
+           // fetch('/data')
+              //  .then(response => response.json())
+               // .then(data => {
                     // Dashboard Section Updates
-                    updateDashboardValues(data);
-                    updateSystemStatus(data);
-                    updatePowerControlUI(data.relayState);
+                 //   updateDashboardValues(data);
+                 //   updateSystemStatus(data);
+                  // updatePowerControlUI(data.relayState);
 
                     // Account Section Updates
-                    updateAccountSection(data);
+                //    updateAccountSection(data);
 
                     // Control Section Updates
-                    updateControlSection(data);
+               //     updateControlSection(data);
 
                     // Update timestamp
-                    const now = new Date();
-                    document.getElementById('update-timestamp').textContent = `Last updated: ${now.toLocaleTimeString()}`;
-                    document.getElementById('update-status').textContent = `Last Update: ${now.toLocaleTimeString()}`;
+                 //   const now = new Date();
+               //     document.getElementById('update-timestamp').textContent = `Last updated: ${now.toLocaleTimeString()}`;
+                //    document.getElementById('update-status').textContent = `Last Update: ${now.toLocaleTimeString()}`;
 
-                })
-                .catch(error => {
-                    console.error('Error fetching data:', error);
-                    showAlert('Connection error. Retrying...', 'warning', 'main-alert');
-                    document.getElementById('update-status').textContent = 'Update Failed';
-                });
-        }
+             //   })
+             //   .catch(error => {
+              //      console.error('Error fetching data:', error);
+              //      showAlert('Connection error. Retrying...', 'warning', 'main-alert');
+              //      document.getElementById('update-status').textContent = 'Update Failed';
+          //      });
+       // }
 
         function num(v) {
             const n = Number(v);
@@ -1304,8 +1304,8 @@ document.getElementById("deviceSelect").addEventListener("change", (e) => {
 
         // Initial update and set interval
        initMQTT();
-       updateValues();
-       setInterval(updateValues, 3000);
+       //updateValues();
+      // setInterval(updateValues, 3000);
 
         // Set initial page to dashboard
         showPage('dashboard');
