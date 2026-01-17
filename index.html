@@ -916,6 +916,7 @@
                   `Last updated: ${now.toLocaleTimeString()}`;
                   document.getElementById('update-status').textContent = 
                   `Last Update: ${now.toLocaleTimeString()}`;
+            
      }
 
        // (function updateValues() {
@@ -946,23 +947,31 @@
           //      });
        // }
 
-        function num(v) {
-            const n = Number(v);
-            return Number.isFinite(n) ? n : null;
+        function n(v, fallback = null) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : fallback;
 }
 
-        function updateDashboardValues(data) {
-            const bal = num(data.balance);
-            const vol = num(data.voltage);
-            const cur = num(data.current);
-            const pow = num(data.power);
-            const ene = num(data.energy);
+function updateAccountSection(data) {
+  const bal = n(data.balance);
+  const ene = n(data.energy);
+  const cpk = n(data.costPerKWh);
 
-            updateElement('balance',  (bal !== null ? bal.toFixed(2) : '--') + '<span class="unit">₦</span>');
-            updateElement('voltage',  (vol !== null ? vol.toFixed(1) : '--') + '<span class="unit">V</span>');
-            updateElement('current',  (cur !== null ? cur.toFixed(3) : '--') + '<span class="unit">A</span>');
-            updateElement('power',    (pow !== null ? pow.toFixed(1) : '--') + '<span class="unit">W</span>');
-            updateElement('energy-value', (ene !== null ? ene.toFixed(3) : '--') + ' kWh');
+  updateElement(
+    'account-balance',
+    (bal !== null ? bal.toFixed(2) : '--') + '<span class="unit">₦</span>'
+  );
+
+  // If any value missing, show '--'
+  let consumptionRate = '--';
+  if (ene !== null && cpk !== null) {
+    consumptionRate = (ene * cpk).toFixed(2);
+  }
+
+  updateElement(
+    'consumption-rate',
+    consumptionRate + '<span class="unit">₦/day</span>'
+  );
 }
 
         function updateSystemStatus(data) {
@@ -1007,25 +1016,48 @@
             updateElement('consumption-rate', consumptionRate + '<span class="unit">₦/day</span>'); // Needs proper daily calculation
         }
 
-        function updateControlSection(data) {
-            updateElement('relay-control-status', data.relayState ? 'ON' : 'OFF');
+       function updateControlSection(data) {
+  // pull numeric values safely
+  const vol   = n(data.voltage);
+  const cur   = n(data.current);
+  const overI = n(data.overCurrentThreshold);
 
-            updateStatusIndicator('control-voltage-indicator', (data.voltage < 180 || data.voltage > 250) ? 'status-warning' : 'status-active');
-            updateElement('control-voltage-status', (data.voltage < 180) ? 'LOW' : (data.voltage > 250 ? 'HIGH' : 'OK'));
+  // Relay status (boolean-ish)
+  const relay = !!data.relayState;
+  updateElement('relay-control-status', relay ? 'ON' : 'OFF');
 
-            updateStatusIndicator('control-current-indicator', (data.current > data.overCurrentThreshold) ? 'status-warning' : 'status-active');
-            updateElement('control-current-status', (data.current > data.overCurrentThreshold) ? 'OVER' : 'OK');
+  // Voltage status (only if voltage exists)
+  const voltWarn = (vol !== null) ? (vol < 180 || vol > 250) : false;
+  updateStatusIndicator('control-voltage-indicator', voltWarn ? 'status-warning' : 'status-active');
+  updateElement(
+    'control-voltage-status',
+    (vol === null) ? '--' : (vol < 180 ? 'LOW' : (vol > 250 ? 'HIGH' : 'OK'))
+  );
 
-            updateStatusIndicator('control-fault-indicator', data.faultDetected ? 'status-danger' : 'status-active');
-            updateElement('control-fault-status', data.faultDetected ? 'FAULT' : 'OK');
+  // Current status (only compare if both exist)
+  let curOver = false;
+  if (cur !== null && overI !== null) curOver = cur > overI;
 
-            updateStatusIndicator('control-theft-indicator', data.theftDetected ? 'status-warning' : 'status-active');
-            updateElement('control-theft-status', data.theftDetected ? 'DETECTED' : 'OK');
+  updateStatusIndicator('control-current-indicator', curOver ? 'status-warning' : 'status-active');
+  updateElement(
+    'control-current-status',
+    (cur === null || overI === null) ? '--' : (curOver ? 'OVER' : 'OK')
+  );
 
-            updatePowerControlUI(data.relayState); // Keep control section buttons in sync
-        }
+  // Fault / Theft (safe booleans)
+  const fault = !!data.faultDetected;
+  updateStatusIndicator('control-fault-indicator', fault ? 'status-danger' : 'status-active');
+  updateElement('control-fault-status', fault ? 'FAULT' : 'OK');
 
+  const theft = !!data.theftDetected;
+  updateStatusIndicator('control-theft-indicator', theft ? 'status-warning' : 'status-active');
+  updateElement('control-theft-status', theft ? 'DETECTED' : 'OK');
 
+  // Keep buttons in sync
+  updatePowerControlUI(relay);
+}
+
+ 
         function updateElement(id, html) {
             const element = document.getElementById(id);
             if (element) {
@@ -1254,14 +1286,18 @@
                console.log("📡 Subscribed to:", currentSubs);
 }
 function initMQTT() {
-  mqttClient = mqtt.connect(MQTT_BROKER, {
-    username: MQTT_USER,
-    password: MQTT_PASS,
-    keepalive: 30,
-    connectTimeout: 30000,
-    reconnectPeriod: 3000,
-    clean: true
-  });
+ mqttClient = mqtt.connect(MQTT_BROKER, {
+  username: MQTT_USER,
+  password: MQTT_PASS,
+
+  clean: true,
+
+  keepalive: 60,            // was 30 (increase)
+  connectTimeout: 30000,    // ok
+  reconnectPeriod: 5000,    // slow down reconnection
+  resubscribe: true,        // ensure subs return
+  protocolVersion: 4        // MQTT 3.1.1 (most stable)
+});
 
   mqttClient.on("connect", () => {
     console.log("✅ MQTT connected");
@@ -1295,6 +1331,7 @@ function initMQTT() {
   mqttClient.on("error", err => console.error("MQTT error:", err));
   mqttClient.on("reconnect", () => console.log("🔁 MQTT reconnecting..."));
   mqttClient.on("offline", () => console.log("📴 MQTT offline"));
+  mqttClient.on("close", () => console.log("❌ socket closed"));
 }
 
 document.getElementById("deviceSelect").addEventListener("change", (e) => {
