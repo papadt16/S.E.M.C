@@ -463,7 +463,7 @@
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            .sidebar {
+            . {
                 display: none;
             }
             .main-content {
@@ -499,6 +499,13 @@
                         <span>Control</span>
                     </a>
                 </li>
+                <li class="nav-item">
+                   <a href="#sessions" class="nav-link" onclick="showPage('sessions')">
+                       <span class="nav-icon">🗓️</span>
+                       <span>Sessions</span>
+                    </a>
+                </li>
+
                 <li class="nav-item">
                     <a href="#settings" class="nav-link" onclick="showPage('settings')">
                         <span class="nav-icon">⚙️</span>
@@ -710,6 +717,80 @@
                     </div>
                 </div>
             </div>
+            
+<!-- Sessions Section -->
+<div id="sessions-section" class="page-section">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Session Management</h1>
+      <p class="page-subtitle">Create schedules and push them to the ESP32</p>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-primary" onclick="openSessionModal()">+ New Session</button>
+      <button class="btn btn-danger" onclick="clearAllSessions()">Clear All</button>
+    </div>
+  </div>
+
+  <div id="sessions-alert" style="display:none;" class="alert"></div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Saved Sessions</h3>
+    </div>
+
+    <div style="overflow:auto;">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid #dee2e6;">
+            <th style="padding:10px;">Device</th>
+            <th style="padding:10px;">Start</th>
+            <th style="padding:10px;">Duration</th>
+            <th style="padding:10px;">Days</th>
+            <th style="padding:10px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="sessionsTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="sessionModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:center; justify-content:center;">
+    <div style="width:min(560px, 92vw); background:white; border-radius:12px; padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;"> <span id="sessionModalTitle">New Session</span> </h3>
+        <button class="btn" onclick="closeSessionModal()">✖</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Device</label>
+        <select id="sessDevice" class="form-input"></select>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+        <div class="form-group">
+          <label class="form-label">Start Time (HH:MM)</label>
+          <input id="sessStart" class="form-input" value="06:00" placeholder="06:00" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Duration (minutes)</label>
+          <input id="sessDuration" type="number" class="form-input" value="30" min="1" step="1" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Days</label>
+        <div id="sessDaysWrap" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+      </div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button class="btn" onclick="closeSessionModal()">Cancel</button>
+        <button class="btn btn-success" onclick="saveSessionFromModal()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
 
             <!-- Settings Section -->
             <div id="settings-section" class="page-section">
@@ -841,10 +922,13 @@
        const MQTT_BROKER = 'wss://cce0028b983e49eab96dcbc4edd56661.s1.eu.hivemq.cloud:8884/mqtt';
        const MQTT_USER   = 'smartmeter';
        const MQTT_PASS   = 'Emmanuel1234$';
-
+       const WEEKDAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        
        let selectedDeviceId = "SOCKET001";
        let lastTelemetryAt = 0;
        let offlineTimer = null;
+       let sessionsStore = [];       // per selectedDeviceId
+       let editingSessionId = null;  // null = create mode
         
               function topicTelemetry(id){ return `smart_socket/${id}/telemetry`; }
             function topicRelaySet(id){ return `smart_socket/${id}/relay/set`; }
@@ -1305,6 +1389,289 @@ function setThresholds() {
   showAlert("Settings updated successfully.");
 }
 
+        function uuid4() {
+  // modern browsers
+  if (crypto && crypto.randomUUID) return crypto.randomUUID();
+  // fallback
+  return "xxxxxxxxyxxx4xxxyxxxxxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random()*16)|0, v = c === "x" ? r : (r&0x3)|0x8;
+    return v.toString(16);
+  });
+}
+
+function sessionsKey(deviceId){ return `sessions_${deviceId}`; }
+
+function loadSessionsLocal() {
+  try {
+    const raw = localStorage.getItem(sessionsKey(selectedDeviceId));
+    sessionsStore = raw ? JSON.parse(raw) : [];
+  } catch {
+    sessionsStore = [];
+  }
+}
+
+function saveSessionsLocal() {
+  localStorage.setItem(sessionsKey(selectedDeviceId), JSON.stringify(sessionsStore));
+}
+
+function daysToText(days){
+  return (days || [])
+    .slice()
+    .sort((a,b)=>a-b)
+    .map(d => WEEKDAY_LABELS[d-1] || String(d))
+    .join(", ");
+}
+
+function renderSessionsTable() {
+  const body = document.getElementById("sessionsTableBody");
+  if (!body) return;
+
+  if (!sessionsStore.length) {
+    body.innerHTML = `<tr><td colspan="5" style="padding:14px; color:#6c757d;">No sessions created yet.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = sessionsStore.map(s => `
+    <tr style="border-bottom:1px solid #e9ecef;">
+      <td style="padding:10px;">${escapeHtml(s.deviceName || s.deviceId)}</td>
+      <td style="padding:10px;">${escapeHtml(s.startTime)}</td>
+      <td style="padding:10px;">${Number(s.duration)} min</td>
+      <td style="padding:10px;">${escapeHtml(daysToText(s.days))}</td>
+      <td style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="editSession('${s.id}')">Edit</button>
+        <button class="btn btn-success" onclick="duplicateSession('${s.id}')">Duplicate +1h</button>
+        <button class="btn btn-danger" onclick="deleteSession('${s.id}')">Delete</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function escapeHtml(str){
+  return String(str ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+function openSessionModal(session=null){
+  editingSessionId = session ? session.id : null;
+  document.getElementById("sessionModalTitle").textContent = session ? "Edit Session" : "New Session";
+
+  // fill devices dropdown using your existing deviceSelect options
+  const devSel = document.getElementById("sessDevice");
+  const source = document.getElementById("deviceSelect");
+  devSel.innerHTML = "";
+  [...source.options].forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.value;
+    devSel.appendChild(o);
+  });
+
+  // default values
+  document.getElementById("sessStart").value = session?.startTime ?? "06:00";
+  document.getElementById("sessDuration").value = session?.duration ?? 30;
+  devSel.value = session?.deviceId ?? selectedDeviceId;
+
+  // days chips
+  const wrap = document.getElementById("sessDaysWrap");
+  wrap.innerHTML = "";
+  const selected = new Set(session?.days ?? []);
+  WEEKDAY_LABELS.forEach((lbl, i) => {
+    const d = i+1;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn";
+    btn.textContent = lbl;
+    btn.dataset.day = String(d);
+    btn.style.background = selected.has(d) ? "#3e92cc" : "#e9ecef";
+    btn.style.color = selected.has(d) ? "white" : "#212529";
+
+    btn.onclick = () => {
+      const day = Number(btn.dataset.day);
+      if (selected.has(day)) selected.delete(day);
+      else selected.add(day);
+
+      btn.style.background = selected.has(day) ? "#3e92cc" : "#e9ecef";
+      btn.style.color = selected.has(day) ? "white" : "#212529";
+    };
+
+    wrap.appendChild(btn);
+  });
+
+  // store selected days temporarily on modal
+  wrap.dataset.selectedDays = JSON.stringify([...selected]);
+
+  // keep dataset updated
+  wrap.addEventListener("click", () => {
+    const days = [...wrap.querySelectorAll("button")]
+      .filter(b => b.style.color === "white")
+      .map(b => Number(b.dataset.day));
+    wrap.dataset.selectedDays = JSON.stringify(days);
+  }, { once:false });
+
+  document.getElementById("sessionModal").style.display = "flex";
+}
+
+function closeSessionModal(){
+  document.getElementById("sessionModal").style.display = "none";
+  editingSessionId = null;
+}
+
+function validateHHMM(s){
+  // strict HH:MM 00-23 : 00-59
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(s).trim());
+  return !!m;
+}
+
+function saveSessionFromModal(){
+  const devId = document.getElementById("sessDevice").value;
+  const start = document.getElementById("sessStart").value.trim();
+  const dur = Number(document.getElementById("sessDuration").value);
+  const days = JSON.parse(document.getElementById("sessDaysWrap").dataset.selectedDays || "[]");
+
+  if (!validateHHMM(start)) {
+    showAlert("Invalid Start Time. Use HH:MM (e.g. 06:00)", "danger", "sessions-alert");
+    return;
+  }
+  if (!Number.isFinite(dur) || dur <= 0) {
+    showAlert("Invalid duration", "danger", "sessions-alert");
+    return;
+  }
+  if (!days.length) {
+    showAlert("Select at least one day", "danger", "sessions-alert");
+    return;
+  }
+
+  const sessionObj = {
+    id: editingSessionId || uuid4(),
+    deviceId: devId,
+    deviceName: devId,     // your web only has IDs; keep name same
+    startTime: start,
+    duration: Math.floor(dur),
+    days: days.sort((a,b)=>a-b),
+  };
+
+  if (editingSessionId) {
+    sessionsStore = sessionsStore.map(s => s.id === editingSessionId ? sessionObj : s);
+  } else {
+    sessionsStore.push(sessionObj);
+  }
+
+  saveSessionsLocal();
+  renderSessionsTable();
+  closeSessionModal();
+
+  // push to ESP32
+  pushSessionsToESP();
+}
+
+function editSession(id){
+  const s = sessionsStore.find(x => x.id === id);
+  if (!s) return;
+  openSessionModal(s);
+}
+
+function deleteSession(id){
+  if (!confirm("Delete this session?")) return;
+  sessionsStore = sessionsStore.filter(s => s.id !== id);
+  saveSessionsLocal();
+  renderSessionsTable();
+  pushSessionsToESP();
+}
+
+function duplicateSession(id){
+  const s = sessionsStore.find(x => x.id === id);
+  if (!s) return;
+
+  // +1 hour shift like your app
+  const [hh, mm] = s.startTime.split(":").map(Number);
+  const newH = ((hh + 1) % 24).toString().padStart(2,"0");
+  const newM = (mm).toString().padStart(2,"0");
+
+  const dup = {
+    ...s,
+    id: uuid4(),
+    startTime: `${newH}:${newM}`,
+  };
+
+  sessionsStore.push(dup);
+  saveSessionsLocal();
+  renderSessionsTable();
+  pushSessionsToESP();
+  showAlert("Duplicated (+1h) and pushed ✅", "success", "sessions-alert");
+}
+
+function clearAllSessions(){
+  if (!confirm("Clear ALL sessions for this device?")) return;
+  sessionsStore = [];
+  saveSessionsLocal();
+  renderSessionsTable();
+  pushSessionsToESP();
+}
+
+// IMPORTANT: your ESP32 currently listens to a hardcoded topic too,
+// so we publish to BOTH for compatibility.
+function topicSessionsSet(id){ return `smart_socket/${id}/sessions/set`; }
+function topicSessionsAck(id){ return `smart_socket/${id}/sessions/ack`; }
+
+function pushSessionsToESP(){
+  if (!mqttClient || !mqttClient.connected) {
+    showAlert("MQTT not connected. Refresh and try again.", "danger", "sessions-alert");
+    return;
+  }
+
+  const payload = JSON.stringify(
+    sessionsStore.map(s => ({
+      id: s.id,
+      startTime: s.startTime,
+      duration: s.duration,
+      days: s.days
+      // deviceId/deviceName not required by your ESP parser
+    }))
+  );
+
+  showAlert("Sending sessions to device...", "warning", "sessions-alert");
+
+  // Publish to device-specific topic
+  mqttClient.publish(topicSessionsSet(selectedDeviceId), payload);
+
+  // Also publish to your ESP's current hardcoded topic (SOCKET001)
+  mqttClient.publish("smart_socket/SOCKET001/sessions/set", payload);
+
+  // We'll mark success when we receive ACK (if your ESP publishes it).
+  // If no ack comes, we still keep it saved locally.
+  waitForSessionsAck();
+}
+
+let _waitingSessionsAck = false;
+function waitForSessionsAck(){
+  if (_waitingSessionsAck) return;
+  _waitingSessionsAck = true;
+
+  const start = Date.now();
+  const TIMEOUT = 6000;
+
+  const ackTimer = setInterval(() => {
+    if (window.lastSessionsAckOk === true) {
+      window.lastSessionsAckOk = false;
+      clearInterval(ackTimer);
+      _waitingSessionsAck = false;
+      showAlert("Sessions saved & pushed to ESP32 ✅", "success", "sessions-alert");
+      return;
+    }
+
+    if (Date.now() - start > TIMEOUT) {
+      clearInterval(ackTimer);
+      _waitingSessionsAck = false;
+      // not fatal: maybe ESP didn't implement ack topic correctly
+      showAlert("Sessions sent. No ACK received (still likely saved).", "warning", "sessions-alert");
+    }
+  }, 200);
+}
+        
         function updateSettingsInputsFromTelemetry(data) {
   if (data.overVoltageThreshold !== undefined)
     document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
@@ -1403,6 +1770,14 @@ function initMQTT() {
     console.error("❌ JSON parse error:", e, msg);
     return;
   }
+      
+if (topic.endsWith("/sessions/ack")) {
+  // ESP sends {"ok":true,...}
+  if (data && (data.ok === true || data.success === true)) {
+    window.lastSessionsAckOk = true;
+  }
+  return;
+}
 
   // ✅ Handle telemetry by topic OR by deviceId inside payload
   if (topic.endsWith("/telemetry")) {
@@ -1440,10 +1815,22 @@ document.getElementById("deviceSelect").addEventListener("change", (e) => {
   // start offline timer (if device doesn't exist / publish, we stay at 0 + OFFLINE)
   startOfflineTimer();
 });
+        
+document.getElementById("deviceSelect").addEventListener("change", (e) => {
+  selectedDeviceId = e.target.value;
+  subscribeToDevice(selectedDeviceId);
+
+  // sessions per device
+  loadSessionsLocal();
+  renderSessionsTable();
+});
 
 
         // Initial update and set interval
        initMQTT();
+       loadSessionsLocal();
+       renderSessionsTable();
+
        //updateValues();
       // setInterval(updateValues, 3000);
 
