@@ -1164,44 +1164,59 @@ function updateAccountSection(data) {
                 }, 5000);
             }
         }
+function topicThresholdsSet(id){ return `smart_socket/${id}/thresholds/set`; }
 
-        function setThresholds() {
-            const form = document.getElementById('threshold-form');
-            const formData = new FormData(form); // Use FormData to easily collect form data
-            const thresholdAlert = document.getElementById('threshold-alert');
-            const saveButton = document.querySelector('#threshold-form button.btn-primary'); // Select save button
-            const data = {};
-            formData.forEach((value, key) => {
-                data[key] = parseFloat(value); // Convert string values from form to floats
-            });
+       function setThresholds() {
+  const alertId = "threshold-alert";
 
-            saveButton.disabled = true; // Disable save button during request
-            showAlert('Saving settings...', 'warning', 'threshold-alert');
+  const data = {
+    overVoltage: parseFloat(document.getElementById("overVoltage").value),
+    overCurrent: parseFloat(document.getElementById("overCurrent").value),
+    minBalance:  parseFloat(document.getElementById("minBalance").value),
+    costPerKWh:  parseFloat(document.getElementById("costPerKWh").value),
+  };
 
+  // Basic validation
+  if (
+    !Number.isFinite(data.overVoltage) ||
+    !Number.isFinite(data.overCurrent) ||
+    !Number.isFinite(data.minBalance)  ||
+    !Number.isFinite(data.costPerKWh)
+  ) {
+    showAlert("Please enter valid numeric values.", "danger", alertId);
+    return;
+  }
 
-            fetch('/setThresholds', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json' // Set content type to JSON
-                },
-                body: JSON.stringify(data) // Send form data as JSON
-            })
-            .then(response => response.json())
-            .then(responseData => {
-                if (responseData.success) {
-                    showAlert('Settings updated successfully.', 'success', 'threshold-alert');
-                    // Optionally update displayed threshold values on the page if you wish
-                } else {
-                    showAlert('Failed to update settings: ' + (responseData.message || 'Unknown error'), 'danger', 'threshold-alert');
-                }
-                saveButton.disabled = false; // Re-enable button after request completes
-            })
-            .catch(error => {
-                console.error('Error setting thresholds:', error);
-                showAlert('Error updating settings. Please try again.', 'danger', 'threshold-alert');
-                saveButton.disabled = false; // Re-enable button even on error
-            });
-        }
+  showAlert("Saving settings...", "warning", alertId);
+
+  fetch("/setThresholds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+    .then(async (res) => {
+      const text = await res.text();
+      let json;
+      try { json = JSON.parse(text); } catch { json = null; }
+
+      if (!res.ok) {
+        console.error("setThresholds failed:", res.status, text);
+        throw new Error(text);
+      }
+
+      if (json && json.success) {
+        showAlert("Settings updated successfully ✅", "success", alertId);
+      } else {
+        console.error("setThresholds response:", text);
+        showAlert("Failed to update settings ❌", "danger", alertId);
+      }
+    })
+    .catch((err) => {
+      console.error("Error setting thresholds:", err);
+      showAlert("Error updating settings. Please try again.", "danger", alertId);
+    });
+}
+
 
         function factoryReset() {
             const resetAlert = document.getElementById('factory-reset-alert');
