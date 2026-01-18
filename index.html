@@ -895,7 +895,8 @@ function updateDashboardValues(data) {
         function handleTelemetry(data) {
            if (offlineTimer) clearTimeout(offlineTimer);
                lastTelemetryAt = Date.now();
-
+               window.latestBalanceValue = Number(data.balance ?? 0);
+            
              updateDashboardValues(data);
              updateSystemStatus(data);
              updateAccountSection(data);
@@ -1184,19 +1185,39 @@ function clearBalance() {
 
   showAlert("Clearing balance... waiting for device confirmation", "warning", "recharge-alert");
 
-  const before = lastTelemetryTs;
-
-  mqttClient.publish(topicBalanceSet(selectedDeviceId), JSON.stringify({ balance: 0 }));
-
+  const beforeTs = window.lastTelemetryTs || 0;
   const start = Date.now();
+  const TIMEOUT_MS = 8000;
+
+  const isZeroish = (v) => Math.abs(Number(v || 0)) < 0.01;
+
+  // publish clear
+  mqttClient.publish(
+    `smart_socket/${selectedDeviceId}/balance/set`,
+    JSON.stringify({ balance: 0 })
+  );
+
+  // optimistic UI update (optional, but nice)
+  // updateBalanceUI(0); // if you have a function for UI
+
   const timer = setInterval(() => {
-    // confirm specifically by checking current UI balance OR last telemetry balance
-    if (lastTelemetryTs !== before && (window.latestBalanceValue === 0 || window.latestBalanceValue === 0.0)) {
+    const latestBal = Number(window.latestBalanceValue ?? NaN);
+
+    // ✅ success if telemetry arrived after request AND balance is ~0
+    if (window.lastTelemetryTs > beforeTs && isZeroish(latestBal)) {
       clearInterval(timer);
       showAlert("Balance cleared ✅", "success", "recharge-alert");
       return;
     }
-    if (Date.now() - start > 4000) {
+
+    // ✅ also count as success if UI already shows ~0 even if timestamp didn’t change
+    if (isZeroish(latestBal)) {
+      clearInterval(timer);
+      showAlert("Balance cleared ✅", "success", "recharge-alert");
+      return;
+    }
+
+    if (Date.now() - start > TIMEOUT_MS) {
       clearInterval(timer);
       showAlert("No confirmation from device. Balance may not have cleared.", "danger", "recharge-alert");
     }
