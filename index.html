@@ -1273,24 +1273,24 @@ function updateAccountSection(data) {
            let mqttClient = null;
            let currentSubs = [];
            
-  function subscribeToDevice(id){
-      if (!mqttClient || !mqttClient.connected) return;
+ function subscribeToDevice(id){
+  if (!mqttClient || !mqttClient.connected) return;
 
-      // unsubscribe old
-        currentSubs.forEach(t => mqttClient.unsubscribe(t));
-          currentSubs = [];
+  currentSubs.forEach(t => mqttClient.unsubscribe(t));
+  currentSubs = [];
 
-    // subscribe new
-           const t1 = topicTelemetry(id);
-         const t2 = topicRelayState(id);
+  const t1 = topicTelemetry(id);
+  const t2 = topicRelayState(id);
 
-         mqttClient.subscribe(t1);
-         mqttClient.subscribe(t2);
+  mqttClient.subscribe(t1);
+  mqttClient.subscribe(t2);
 
-         currentSubs = [t1, t2];
+  currentSubs = [t1, t2];
 
-               console.log("📡 Subscribed to:", currentSubs);
+  console.log("📡 Subscribed to:", currentSubs);
 }
+
+        
 function initMQTT() {
  mqttClient = mqtt.connect(MQTT_BROKER, {
   username: MQTT_USER,
@@ -1315,24 +1315,35 @@ function initMQTT() {
     subscribeToDevice(selectedDeviceId);
   });
 
-   mqttClient.on("message", (topic, payload) => {
-    const msg = payload.toString();
+  mqttClient.on("message", (topic, payload) => {
+  const msg = payload.toString();
+  console.log("📩 MQTT message:", topic, msg);
 
-    // telemetry
-    if (topic === topicTelemetry(selectedDeviceId)) {
-      const data = JSON.parse(msg);
-      handleTelemetry(data);
-      return;
-    }
+  let data;
+  try {
+    data = JSON.parse(msg);
+  } catch (e) {
+    console.error("❌ JSON parse error:", e, msg);
+    return;
+  }
 
-    // relay state
-    if (topic === topicRelayState(selectedDeviceId)) {
-      const data = JSON.parse(msg); // {state:true/false} OR {relayState:true}
-      const state = (data.state !== undefined) ? data.state : data.relayState;
-      updatePowerControlUI(!!state);
-      return;
-    }
-  });
+  // ✅ Handle telemetry by topic OR by deviceId inside payload
+  if (topic.endsWith("/telemetry")) {
+    // if payload has deviceId, use it to route correctly
+    if (data.deviceId && data.deviceId !== selectedDeviceId) return;
+
+    handleTelemetry(data);
+    return;
+  }
+
+  // relay state updates
+  if (topic.endsWith("/relay/state")) {
+    const state = (data.state !== undefined) ? data.state : data.relayState;
+    updatePowerControlUI(!!state);
+    return;
+  }
+});
+
 
   mqttClient.on("error", err => console.error("MQTT error:", err));
   mqttClient.on("reconnect", () => console.log("🔁 MQTT reconnecting..."));
