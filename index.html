@@ -979,6 +979,7 @@ function updateDashboardValues(data) {
         function handleTelemetry(data) {
            if (offlineTimer) clearTimeout(offlineTimer);
                lastTelemetryAt = Date.now();
+               window.lastTelemetryTs = Date.now();
                window.latestBalanceValue = Number(data.balance ?? 0);
             
              updateDashboardValues(data);
@@ -1386,7 +1387,7 @@ function setThresholds() {
 
   mqttClient.publish(topic, payload);
 
-  showAlert("Settings updated successfully.");
+  showAlert("Settings sent ✅ (waiting for device to apply)", "success", "threshold-alert");
 }
 
         function uuid4() {
@@ -1717,19 +1718,24 @@ function waitForSessionsAck(){
            let mqttClient = null;
            let currentSubs = [];
            
- function subscribeToDevice(id){
+function subscribeToDevice(id){
   if (!mqttClient || !mqttClient.connected) return;
 
+  // unsubscribe old topics (including old ack topics)
   currentSubs.forEach(t => mqttClient.unsubscribe(t));
   currentSubs = [];
 
   const t1 = topicTelemetry(id);
   const t2 = topicRelayState(id);
 
-  mqttClient.subscribe(t1);
-  mqttClient.subscribe(t2);
+  const ack1 = `smart_socket/${id}/sessions/ack`;
+  const ack2 = `smart_socket/SOCKET001/sessions/ack`; // legacy
 
-  currentSubs = [t1, t2];
+  const newSubs = [t1, t2, ack1, ack2];
+
+  newSubs.forEach(t => mqttClient.subscribe(t));
+
+  currentSubs = newSubs;
 
   console.log("📡 Subscribed to:", currentSubs);
 }
@@ -1757,7 +1763,10 @@ function initMQTT() {
     selectedDeviceId = sel ? sel.value : selectedDeviceId;
 
     subscribeToDevice(selectedDeviceId);
+    startOfflineTimer(); // ✅ add
   });
+    
+
 
   mqttClient.on("message", (topic, payload) => {
   const msg = payload.toString();
@@ -1806,23 +1815,16 @@ if (topic.endsWith("/sessions/ack")) {
 document.getElementById("deviceSelect").addEventListener("change", (e) => {
   selectedDeviceId = e.target.value;
 
-  // clear UI immediately so old device values don't remain frozen
   resetUIForNewDevice();
 
-  // subscribe to new topics
-  subscribeToDevice(selectedDeviceId);
-
-  // start offline timer (if device doesn't exist / publish, we stay at 0 + OFFLINE)
-  startOfflineTimer();
-});
-        
-document.getElementById("deviceSelect").addEventListener("change", (e) => {
-  selectedDeviceId = e.target.value;
+  // swap topic subscriptions
   subscribeToDevice(selectedDeviceId);
 
   // sessions per device
   loadSessionsLocal();
   renderSessionsTable();
+
+  startOfflineTimer();
 });
 
 
