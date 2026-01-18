@@ -828,7 +828,7 @@
 
             <div class="dashboard-footer">
                 <p id="update-status">Last Update: --</p>
-                <p>Prepaid Energy Monitor Pro © 2025</p>
+                <p>Energy Monitor Pro © 2026</p>
             </div>
         </div>
     </div>
@@ -842,7 +842,9 @@
        const MQTT_PASS   = 'Emmanuel1234$';
 
        let selectedDeviceId = "SOCKET001";
-
+       let lastTelemetryAt = 0;
+       let offlineTimer = null;
+        
               function topicTelemetry(id){ return `smart_socket/${id}/telemetry`; }
             function topicRelaySet(id){ return `smart_socket/${id}/relay/set`; }
           function topicRelayState(id){ return `smart_socket/${id}/relay/state`; }
@@ -889,12 +891,29 @@ function updateDashboardValues(data) {
 }
 
         function handleTelemetry(data) {
-           
-            updateDashboardValues(data);
-              updateSystemStatus(data);
-               updateAccountSection(data);
-              updateControlSection(data);
-                     updatePowerControlUI(data.relayState);
+           if (offlineTimer) clearTimeout(offlineTimer);
+               lastTelemetryAt = Date.now();
+
+             updateDashboardValues(data);
+             updateSystemStatus(data);
+             updateAccountSection(data);
+             updateControlSection(data);
+             updatePowerControlUI(data.relayState);
+             updateSettingsInputsFromTelemetry(data);
+
+       // Fill settings inputs from device values (only if present)
+         if (data.overVoltageThreshold !== undefined) {
+             document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
+          }
+          if (data.overCurrentThreshold !== undefined) {
+               document.getElementById("overCurrent").value = Number(data.overCurrentThreshold);
+          }
+          if (data.minimumBalance !== undefined) {
+              document.getElementById("minBalance").value = Number(data.minimumBalance);
+          }
+         if (data.costPerKWh !== undefined) {
+             document.getElementById("costPerKWh").value = Number(data.costPerKWh);
+          }
 
                  
                     const now = new Date();
@@ -902,7 +921,7 @@ function updateDashboardValues(data) {
                   `Last updated: ${now.toLocaleTimeString()}`;
                   document.getElementById('update-status').textContent = 
                   `Last Update: ${now.toLocaleTimeString()}`;
-            
+             
      }
 
        // (function updateValues() {
@@ -989,6 +1008,38 @@ function updateAccountSection(data) {
             updateElement('relay-control-status', relayStatusText);
         }
 
+function resetUIForNewDevice() {
+  updateElement('balance', `0.00<span class="unit">₦</span>`);
+  updateElement('voltage', `0.0<span class="unit">V</span>`);
+  updateElement('current', `0.000<span class="unit">A</span>`);
+  updateElement('power', `0.0<span class="unit">W</span>`);
+  updateElement('energy-value', `0.000 kWh`);
+
+  updateElement('power-status', 'OFFLINE');
+  updateStatusIndicator('power-indicator', 'status-inactive');
+
+  updateElement('relay-control-status', 'OFFLINE');
+
+  // reset settings form to show placeholders until device sends its real settings
+  document.getElementById("overVoltage").value = 260;
+  document.getElementById("overCurrent").value = 10.0;
+  document.getElementById("minBalance").value = 0.0;
+  document.getElementById("costPerKWh").value = 0.20;
+
+  document.getElementById('update-timestamp').textContent = `Last updated: --:--:--`;
+  document.getElementById('update-status').textContent = `Last Update: --`;
+}
+
+        function startOfflineTimer() {
+  if (offlineTimer) clearTimeout(offlineTimer);
+
+  offlineTimer = setTimeout(() => {
+    // If no telemetry came recently, keep zeros and mark offline
+    updateElement('power-status', 'OFFLINE');
+    updateStatusIndicator('power-indicator', 'status-inactive');
+    updateElement('relay-control-status', 'OFFLINE');
+  }, 5000); // 5 seconds
+}
 
        function updateControlSection(data) {
   // pull numeric values safely
@@ -1201,7 +1252,21 @@ function setThresholds() {
 
   mqttClient.publish(topic, payload);
 
-  showAlert("Settings sent ✅. ESP32 will apply shortly.", "success", "threshold-alert");
+  showAlert("Settings updated successfully.");
+}
+
+        function updateSettingsInputsFromTelemetry(data) {
+  if (data.overVoltageThreshold !== undefined)
+    document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
+
+  if (data.overCurrentThreshold !== undefined)
+    document.getElementById("overCurrent").value = Number(data.overCurrentThreshold);
+
+  if (data.minimumBalance !== undefined)
+    document.getElementById("minBalance").value = Number(data.minimumBalance);
+
+  if (data.costPerKWh !== undefined)
+    document.getElementById("costPerKWh").value = Number(data.costPerKWh);
 }
 
 
@@ -1315,8 +1380,17 @@ function initMQTT() {
 
 document.getElementById("deviceSelect").addEventListener("change", (e) => {
   selectedDeviceId = e.target.value;
+
+  // clear UI immediately so old device values don't remain frozen
+  resetUIForNewDevice();
+
+  // subscribe to new topics
   subscribeToDevice(selectedDeviceId);
+
+  // start offline timer (if device doesn't exist / publish, we stay at 0 + OFFLINE)
+  startOfflineTimer();
 });
+
 
         // Initial update and set interval
        initMQTT();
