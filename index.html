@@ -665,6 +665,7 @@
                         </div>
                     </div>
                     <button class="btn btn-primary" onclick="rechargeAccount()">Process Recharge</button>
+                    <button class="btn btn-danger" onclick="clearBalance()" style="margin-left:10px;">  Clear Balance</button>
                 </div>
             </div>
 
@@ -849,6 +850,7 @@
             function topicRelaySet(id){ return `smart_socket/${id}/relay/set`; }
           function topicRelayState(id){ return `smart_socket/${id}/relay/state`; }
          function topicRecharge(id){ return `smart_socket/${id}/balance/add`; }
+        function topicBalanceSet(id){ return `smart_socket/${id}/balance/set`; }
 
 
         let relayState = false; 
@@ -1172,6 +1174,25 @@ function resetUIForNewDevice() {
         })
         .catch(() => showAlert('Recharge error', 'danger', 'recharge-alert'))
         .finally(() => rechargeButton.disabled = false);
+}
+
+        function clearBalance() {
+  if (!confirm("Are you sure you want to clear balance to ₦0.00?")) return;
+
+  if (!mqttClient || !mqttClient.connected) {
+    showAlert("MQTT not connected. Refresh page and try again.", "danger", "recharge-alert");
+    return;
+  }
+
+  showAlert("Clearing balance...", "warning", "recharge-alert");
+
+  mqttClient.publish(topicBalanceSet(selectedDeviceId), JSON.stringify({ balance: 0 }));
+
+  // optional: optimistic UI update immediately (telemetry will also update it)
+  updateElement("balance", '0.00<span class="unit">₦</span>');
+  updateElement("account-balance", '0.00<span class="unit">₦</span>');
+
+  showAlert("Balance cleared ✅", "success", "recharge-alert");
 }
 
         function quickRecharge() {
