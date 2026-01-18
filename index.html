@@ -1176,7 +1176,11 @@ function resetUIForNewDevice() {
         .finally(() => rechargeButton.disabled = false);
 }
 
-        function clearBalance() {
+   function topicBalanceClear(id){ return `smart_socket/${id}/balance/clear`; }
+
+let lastTelemetryTs = 0; // will update inside handleTelemetry()
+
+function clearBalance() {
   if (!confirm("Are you sure you want to clear balance to ₦0.00?")) return;
 
   if (!mqttClient || !mqttClient.connected) {
@@ -1184,16 +1188,28 @@ function resetUIForNewDevice() {
     return;
   }
 
-  showAlert("Clearing balance...", "warning", "recharge-alert");
+  showAlert("Clearing balance... waiting for device confirmation", "warning", "recharge-alert");
 
-  mqttClient.publish(topicBalanceSet(selectedDeviceId), JSON.stringify({ balance: 0 }));
+  const before = lastTelemetryTs;
 
-  // optional: optimistic UI update immediately (telemetry will also update it)
-  updateElement("balance", '0.00<span class="unit">₦</span>');
-  updateElement("account-balance", '0.00<span class="unit">₦</span>');
+  // publish a CLEAR command (no payload needed)
+  mqttClient.publish(topicBalanceClear(selectedDeviceId), JSON.stringify({}));
 
-  showAlert("Balance cleared ✅", "success", "recharge-alert");
+  // wait up to 3s for fresh telemetry to confirm
+  const start = Date.now();
+  const timer = setInterval(() => {
+    if (lastTelemetryTs !== before) {
+      clearInterval(timer);
+      showAlert("Balance cleared ✅", "success", "recharge-alert");
+      return;
+    }
+    if (Date.now() - start > 3000) {
+      clearInterval(timer);
+      showAlert("No confirmation from device. Balance may not have cleared.", "danger", "recharge-alert");
+    }
+  }, 200);
 }
+
 
         function quickRecharge() {
     const amount = parseFloat(document.getElementById('quick-recharge-amount').value);
