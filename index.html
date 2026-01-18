@@ -1164,10 +1164,14 @@ function updateAccountSection(data) {
                 }, 5000);
             }
         }
-function topicThresholdsSet(id){ return `smart_socket/${id}/thresholds/set`; }
+function topicThresholdsSet(id){ 
+  return `smart_socket/${id}/thresholds/set`; 
+}
 
-       function setThresholds() {
-  const alertId = "threshold-alert";
+function setThresholds() {
+  // ❌ HARD BLOCK any old fetch path
+  // (If you still see /setThresholds in console after this, you're not deploying the right file.)
+  console.log("✅ setThresholds() called — using MQTT only (no HTTP).");
 
   const data = {
     overVoltage: parseFloat(document.getElementById("overVoltage").value),
@@ -1176,45 +1180,28 @@ function topicThresholdsSet(id){ return `smart_socket/${id}/thresholds/set`; }
     costPerKWh:  parseFloat(document.getElementById("costPerKWh").value),
   };
 
-  // Basic validation
-  if (
-    !Number.isFinite(data.overVoltage) ||
-    !Number.isFinite(data.overCurrent) ||
-    !Number.isFinite(data.minBalance)  ||
-    !Number.isFinite(data.costPerKWh)
-  ) {
-    showAlert("Please enter valid numeric values.", "danger", alertId);
+  // validate
+  for (const [k,v] of Object.entries(data)) {
+    if (!Number.isFinite(v)) {
+      showAlert(`Invalid value for ${k}`, "danger", "threshold-alert");
+      return;
+    }
+  }
+
+  // ensure mqtt connected
+  if (!mqttClient || !mqttClient.connected) {
+    showAlert("MQTT not connected. Refresh page and try again.", "danger", "threshold-alert");
     return;
   }
 
-  showAlert("Saving settings...", "warning", alertId);
+  showAlert("Sending settings via MQTT...", "warning", "threshold-alert");
 
-  fetch("/setThresholds", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  })
-    .then(async (res) => {
-      const text = await res.text();
-      let json;
-      try { json = JSON.parse(text); } catch { json = null; }
+  const topic = topicThresholdsSet(selectedDeviceId);
+  const payload = JSON.stringify(data);
 
-      if (!res.ok) {
-        console.error("setThresholds failed:", res.status, text);
-        throw new Error(text);
-      }
+  mqttClient.publish(topic, payload);
 
-      if (json && json.success) {
-        showAlert("Settings updated successfully ✅", "success", alertId);
-      } else {
-        console.error("setThresholds response:", text);
-        showAlert("Failed to update settings ❌", "danger", alertId);
-      }
-    })
-    .catch((err) => {
-      console.error("Error setting thresholds:", err);
-      showAlert("Error updating settings. Please try again.", "danger", alertId);
-    });
+  showAlert("Settings sent ✅. ESP32 will apply shortly.", "success", "threshold-alert");
 }
 
 
