@@ -266,6 +266,70 @@
             font-weight: 600;
         }
 
+        .session-chip {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid var(--gray-300);
+  background: white;
+  font-size:13px;
+}
+
+.session-chip strong { font-weight: 600; }
+.session-chip .badge {
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:600;
+  color:white;
+}
+.badge-active { background: var(--accent); }
+.badge-upcoming { background: var(--secondary); }
+.badge-ended { background: var(--gray-600); }
+
+.session-list {
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.session-row {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  padding:12px;
+  border:1px solid var(--gray-200);
+  border-radius:12px;
+  background: var(--light);
+}
+
+.session-row .left {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.session-row .right {
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:6px;
+  min-width: 160px;
+}
+
+.session-row .meta {
+  font-size:13px;
+  color: var(--gray-700);
+}
+
+.session-row .tiny {
+  font-size:12px;
+  color: var(--gray-600);
+}
+
         /* Action Areas */
         .action-card {
             height: 100%;
@@ -732,6 +796,21 @@
   </div>
 
   <div id="sessions-alert" style="display:none;" class="alert"></div>
+    
+<!-- Today's Sessions -->
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
+    <h3 class="card-title">TODAY'S SESSIONS</h3>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <span id="todaySessionsMeta" style="font-size:13px; color:#6c757d;">--</span>
+      <button class="btn btn-primary" onclick="renderTodaysSessions()">Refresh</button>
+    </div>
+  </div>
+
+  <div id="todaySessionsWrap" style="padding-top:6px;">
+    <div style="color:#6c757d;">No data yet.</div>
+  </div>
+</div>
 
   <div class="card">
     <div class="card-header">
@@ -961,19 +1040,26 @@
                 const dashboardBalance = document.getElementById('balance').textContent;
                 document.getElementById('account-balance').textContent = dashboardBalance;
             }
+            
+            if (page === "sessions") {
+               loadSessionsLocal();
+                 renderSessionsTable();
+                   renderTodaysSessions();
+            }
         }
-function updateDashboardValues(data) {
-  const bal = n(data.balance);
-  const vol = n(data.voltage);
-  const cur = n(data.current);
-  const pow = n(data.power);
-  const ene = n(data.energy);
+        
+       function updateDashboardValues(data) {
+            const bal = n(data.balance);
+                const vol = n(data.voltage);
+                   const cur = n(data.current);
+                       const pow = n(data.power);
+                            const ene = n(data.energy);
 
-  updateElement('balance', (bal !== null ? bal.toFixed(2) : '--') + '<span class="unit">₦</span>');
-  updateElement('voltage', (vol !== null ? vol.toFixed(1) : '--') + '<span class="unit">V</span>');
-  updateElement('current', (cur !== null ? cur.toFixed(3) : '--') + '<span class="unit">A</span>');
-  updateElement('power',   (pow !== null ? pow.toFixed(1) : '--') + '<span class="unit">W</span>');
-  updateElement('energy-value', (ene !== null ? ene.toFixed(3) : '--') + ' kWh');
+              updateElement('balance', (bal !== null ? bal.toFixed(2) : '--') + '<span class="unit">₦</span>');
+              updateElement('voltage', (vol !== null ? vol.toFixed(1) : '--') + '<span class="unit">V</span>');
+              updateElement('current', (cur !== null ? cur.toFixed(3) : '--') + '<span class="unit">A</span>');
+              updateElement('power',   (pow !== null ? pow.toFixed(1) : '--') + '<span class="unit">W</span>');
+              updateElement('energy-value', (ene !== null ? ene.toFixed(3) : '--') + ' kWh');
 }
 
         function handleTelemetry(data) {
@@ -1740,6 +1826,106 @@ function subscribeToDevice(id){
   console.log("📡 Subscribed to:", currentSubs);
 }
 
+        function parseHHMMToMinutes(hhmm){
+  const [h,m] = String(hhmm).split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return (h * 60) + m;
+}
+
+function minutesToHHMM(mins){
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+}
+
+function getTodayWdayNum(){
+  // Your sessions use 1..7 => Mon..Sun
+  const js = new Date().getDay(); // Sun=0..Sat=6
+  return js === 0 ? 7 : js;       // Mon=1..Sun=7
+}
+
+function renderTodaysSessions(){
+  const wrap = document.getElementById("todaySessionsWrap");
+  const meta = document.getElementById("todaySessionsMeta");
+  if (!wrap) return;
+
+  // Make sure sessionsStore is loaded for the selected device
+  // (you already do this on change; this is just safety)
+  if (!Array.isArray(sessionsStore)) sessionsStore = [];
+
+  const today = getTodayWdayNum();
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+
+  // Filter sessions for today + selected device
+  const todaySessions = sessionsStore
+    .filter(s => Array.isArray(s.days) && s.days.includes(today))
+    .map(s => {
+      const startMin = parseHHMMToMinutes(s.startTime);
+      const duration = Number(s.duration) || 0;
+      const endMin = (startMin !== null) ? (startMin + duration) : null;
+
+      const isActive = (startMin !== null && endMin !== null && nowMin >= startMin && nowMin < endMin);
+      const isUpcoming = (startMin !== null && nowMin < startMin);
+      const isEnded = (endMin !== null && nowMin >= endMin);
+
+      return { ...s, startMin, endMin, isActive, isUpcoming, isEnded };
+    })
+    .filter(s => s.startMin !== null)
+    .sort((a,b) => a.startMin - b.startMin);
+
+  // Meta line
+  const dayLabel = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][now.getDay()];
+  meta.textContent = `${dayLabel} • ${todaySessions.length} session(s)`;
+
+  if (!todaySessions.length){
+    wrap.innerHTML = `<div style="color:#6c757d;">No sessions scheduled for today on <b>${selectedDeviceId}</b>.</div>`;
+    return;
+  }
+
+  // Find next upcoming
+  const nextUp = todaySessions.find(s => s.isUpcoming) || null;
+
+  const chips = [];
+  const activeCount = todaySessions.filter(s => s.isActive).length;
+  if (activeCount) chips.push(`<span class="session-chip"><span class="badge badge-active">ACTIVE</span><strong>${activeCount}</strong> running now</span>`);
+  if (nextUp) {
+    chips.push(`<span class="session-chip"><span class="badge badge-upcoming">NEXT</span><strong>${nextUp.startTime}</strong> for ${nextUp.duration} min</span>`);
+  }
+
+  const chipsHtml = chips.length ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">${chips.join("")}</div>` : "";
+
+  const rowsHtml = todaySessions.map(s => {
+    const endTime = (s.endMin !== null) ? minutesToHHMM(s.endMin) : "--:--";
+
+    let badge = `<span class="badge badge-upcoming">UPCOMING</span>`;
+    if (s.isActive) badge = `<span class="badge badge-active">ACTIVE NOW</span>`;
+    if (s.isEnded) badge = `<span class="badge badge-ended">ENDED</span>`;
+
+    return `
+      <div class="session-row">
+        <div class="left">
+          <div class="meta">
+            <b>${s.startTime}</b> → <b>${endTime}</b>
+            <span style="margin-left:8px; color:#6c757d;">(${s.duration} min)</span>
+          </div>
+          <div class="tiny">Session ID: ${escapeHtml(s.id)}</div>
+        </div>
+
+        <div class="right">
+          ${badge}
+          <div class="tiny">Device: <b>${escapeHtml(s.deviceId)}</b></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.innerHTML = `
+    ${chipsHtml}
+    <div class="session-list">${rowsHtml}</div>
+  `;
+}
+
         
 function initMQTT() {
  mqttClient = mqtt.connect(MQTT_BROKER, {
@@ -1811,6 +1997,14 @@ if (topic.endsWith("/sessions/ack")) {
   mqttClient.on("offline", () => console.log("📴 MQTT offline"));
   mqttClient.on("close", () => console.log("❌ socket closed"));
 }
+        
+setInterval(() => {
+  // only update if sessions page is visible
+  const sec = document.getElementById("sessions-section");
+  if (sec && sec.classList.contains("active")) {
+    renderTodaysSessions();
+  }
+}, 60000); // every 60s
 
 document.getElementById("deviceSelect").addEventListener("change", (e) => {
   selectedDeviceId = e.target.value;
@@ -1823,6 +2017,7 @@ document.getElementById("deviceSelect").addEventListener("change", (e) => {
   // sessions per device
   loadSessionsLocal();
   renderSessionsTable();
+  renderTodaysSessions();
 
   startOfflineTimer();
 });
@@ -1832,6 +2027,7 @@ document.getElementById("deviceSelect").addEventListener("change", (e) => {
        initMQTT();
        loadSessionsLocal();
        renderSessionsTable();
+       renderTodaysSessions();
 
        //updateValues();
       // setInterval(updateValues, 3000);
