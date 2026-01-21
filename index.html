@@ -1003,6 +1003,7 @@
        const MQTT_USER   = 'smartmeter';
        const MQTT_PASS   = 'Emmanuel1234$';
        const WEEKDAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+       const SELECTED_DEVICE_KEY = "selectedDeviceId";
         
        let selectedDeviceId = "SOCKET001";
        let lastTelemetryAt = 0;
@@ -1010,11 +1011,11 @@
        let sessionsStore = [];       // per selectedDeviceId
        let editingSessionId = null;  // null = create mode
         
-              function topicTelemetry(id){ return `smart_socket/${id}/telemetry`; }
-            function topicRelaySet(id){ return `smart_socket/${id}/relay/set`; }
-          function topicRelayState(id){ return `smart_socket/${id}/relay/state`; }
+         function topicTelemetry(id){ return `smart_socket/${id}/telemetry`; }
+         function topicRelaySet(id){ return `smart_socket/${id}/relay/set`; }
+         function topicRelayState(id){ return `smart_socket/${id}/relay/state`; }
          function topicRecharge(id){ return `smart_socket/${id}/balance/add`; }
-        function topicBalanceSet(id){ return `smart_socket/${id}/balance/set`; }
+         function topicBalanceSet(id){ return `smart_socket/${id}/balance/set`; }
 
 
         let relayState = false; 
@@ -1048,6 +1049,23 @@
                    renderTodaysSessions();
             }
         }
+        
+        function saveSelectedDevice(id) {
+          try { localStorage.setItem(SELECTED_DEVICE_KEY, id); } catch {}
+        }
+
+       function loadSelectedDevice() {
+          try { return localStorage.getItem(SELECTED_DEVICE_KEY); } catch { return null; }
+        }
+
+       function applySelectedDeviceToUI(id) {
+          const sel = document.getElementById("deviceSelect");
+       if (!sel) return;
+
+      // only apply if option exists
+       const exists = [...sel.options].some(o => o.value === id);
+       if (exists) sel.value = id;
+      }
         
        function updateDashboardValues(data) {
             const bal = n(data.balance);
@@ -1942,17 +1960,20 @@ function initMQTT() {
   protocolVersion: 4        // MQTT 3.1.1 (most stable)
 });
 
-  mqttClient.on("connect", () => {
-    console.log("✅ MQTT connected");
+mqttClient.on("connect", () => {
+  console.log("✅ MQTT connected");
 
-    // set initial device
-    const sel = document.getElementById("deviceSelect");
-    selectedDeviceId = sel ? sel.value : selectedDeviceId;
+  // ensure UI shows the restored selection (if any)
+  const sel = document.getElementById("deviceSelect");
+  if (sel) {
+    applySelectedDeviceToUI(selectedDeviceId); // sets dropdown to saved device if it exists
+    selectedDeviceId = sel.value;              // now selectedDeviceId matches the UI
+    saveSelectedDevice(selectedDeviceId);      // re-save for consistency
+  }
 
-    subscribeToDevice(selectedDeviceId);
-    startOfflineTimer(); // ✅ add
-  });
-    
+  subscribeToDevice(selectedDeviceId);
+  startOfflineTimer();
+});
 
 
   mqttClient.on("message", (topic, payload) => {
@@ -2009,19 +2030,24 @@ setInterval(() => {
 
 document.getElementById("deviceSelect").addEventListener("change", (e) => {
   selectedDeviceId = e.target.value;
+  saveSelectedDevice(selectedDeviceId);   // ✅ add this line
 
   resetUIForNewDevice();
-
-  // swap topic subscriptions
   subscribeToDevice(selectedDeviceId);
 
-  // sessions per device
   loadSessionsLocal();
   renderSessionsTable();
   renderTodaysSessions();
 
   startOfflineTimer();
 });
+        
+// ✅ Restore saved device before anything else
+  const saved = loadSelectedDevice();
+  if (saved) {
+  selectedDeviceId = saved;
+  applySelectedDeviceToUI(saved);
+}
 
 
         // Initial update and set interval
