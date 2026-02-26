@@ -40,6 +40,7 @@
             background-color: var(--gray-100);
             color: var(--text);
             line-height: 1.6;
+            overflow-x: hidden;
         }
 
         .dashboard-container {
@@ -523,18 +524,50 @@
             text-align: center;
         }
 
-        /* Responsive */
-        @media (max-width: 992px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            . {
-                display: none;
-            }
-            .main-content {
-                grid-column: 1;
-            }
-        }
+        /* ✅ Desktop: fixed sidebar, main content shifted right */
+.main-content{
+  margin-left: 240px;  /* important because sidebar is fixed */
+}
+
+/* ✅ Mobile/tablet */
+@media (max-width: 992px) {
+  .dashboard-container {
+    grid-template-columns: 1fr;
+  }
+
+  /* hide sidebar on small screens */
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+  }
+
+  /* main content should take full width */
+  .main-content {
+    margin-left: 0;
+    grid-column: 1;
+    padding: 16px;
+  }
+
+  /* tighten big numbers so they don’t overflow */
+  .dashboard-value {
+    font-size: 26px;
+  }
+
+  /* allow stacked buttons/inputs to wrap nicely */
+  .input-group {
+    flex-wrap: wrap;
+  }
+}
+
+/* ✅ Extra small screens */
+@media (max-width: 480px) {
+  .card {
+    padding: 14px;
+  }
+  .page-title {
+    font-size: 20px;
+  }
+}
     </style>
 </head>
 <body>
@@ -604,9 +637,9 @@
                     <div id="update-timestamp">Last updated: --:--:--</div>
                 </div>
 
-                <div style="display:flex; gap:10px; align-items:center;">
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                  <label style="font-size:14px;color:#555;">Device:</label>
-                  <select id="deviceSelect" class="form-input" style="width:160px;">
+                  <select id="deviceSelect" class="form-input" style="width:min(220px, 100%);">
                    <option value="SOCKET001">SOCKET001</option>
                     <option value="SOCKET002">SOCKET002</option>
                      <option value="SOCKET003">SOCKET003</option>
