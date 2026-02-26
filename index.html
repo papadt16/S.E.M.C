@@ -558,7 +558,72 @@
     flex-wrap: wrap;
   }
 }
+/* ===== Mobile Sidebar Toggle ===== */
+.mobile-topbar {
+  display: none;               /* hidden on desktop */
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: white;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gray-300);
+  align-items: center;
+  gap: 10px;
+}
 
+.hamburger {
+  font-size: 22px;
+  padding: 8px 12px;
+  border: 1px solid var(--gray-300);
+  background: white;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.mobile-title {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+/* overlay behind sidebar */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 90;
+}
+
+/* Desktop baseline (your sidebar is fixed) */
+.main-content {
+  margin-left: 240px;
+}
+
+/* Mobile behavior */
+@media (max-width: 992px) {
+  .mobile-topbar {
+    display: flex;
+  }
+
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  /* when open */
+  body.sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  body.sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 16px;
+  }
+}
 /* ✅ Extra small screens */
 @media (max-width: 480px) {
   .card {
@@ -571,6 +636,17 @@
     </style>
 </head>
 <body>
+    <!-- Mobile Topbar -->
+<div class="mobile-topbar">
+  <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle menu">
+    ☰
+  </button>
+  <div class="mobile-title">EnergyPro</div>
+</div>
+
+<!-- Overlay (click to close sidebar) -->
+<div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+    
     <div class="dashboard-container">
         <!-- Sidebar Navigation -->
         <div class="sidebar">
@@ -1052,7 +1128,15 @@
 
 
         let relayState = false; 
+        
+        function toggleSidebar(){
+          document.body.classList.toggle("sidebar-open");
+           }
 
+        function closeSidebar(){
+          document.body.classList.remove("sidebar-open");
+           }
+        
         function showPage(page) {
             // Hide all page sections
             const pageSections = document.querySelectorAll('.page-section');
@@ -1081,6 +1165,7 @@
                  renderSessionsTable();
                    renderTodaysSessions();
             }
+            closeSidebar();
         }
         
         function saveSelectedDevice(id) {
