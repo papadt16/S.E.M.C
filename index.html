@@ -1978,14 +1978,17 @@ function saveSessionFromModal(){
     return;
   }
 
-  const sessionObj = {
-    id: editingSessionId || uuid4(),
-    deviceId: devId,
-    deviceName: devId,     // your web only has IDs; keep name same
-    startTime: start,
-    duration: Math.floor(dur),
-    days: days.sort((a,b)=>a-b),
-  };
+ const devices = loadDevices();
+ const foundDevice = devices.find(d => d.deviceId === devId);
+
+const sessionObj = {
+  id: editingSessionId || uuid4(),
+  deviceId: devId,
+  deviceName: foundDevice ? foundDevice.displayName : devId,
+  startTime: start,
+  duration: Math.floor(dur),
+  days: days.sort((a,b)=>a-b),
+};
 
   if (editingSessionId) {
     sessionsStore = sessionsStore.map(s => s.id === editingSessionId ? sessionObj : s);
