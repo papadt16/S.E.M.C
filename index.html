@@ -680,12 +680,20 @@
                     </a>
                 </li>
 
+                  <li class="nav-item">
+                    <a href="#devices" class="nav-link" onclick="showPage('devices')">
+                        <span class="nav-icon">📋</span>
+                        <span>Devices</span>
+                   </a>
+                </li>
+                
                 <li class="nav-item">
                     <a href="#settings" class="nav-link" onclick="showPage('settings')">
                         <span class="nav-icon">⚙️</span>
                         <span>Settings</span>
                     </a>
                 </li>
+
                 <li class="nav-item">
                     <a href="#reports" class="nav-link" onclick="showPage('reports')">
                         <span class="nav-icon">📈</span>
@@ -715,12 +723,8 @@
 
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                  <label style="font-size:14px;color:#555;">Device:</label>
-                  <select id="deviceSelect" class="form-input" style="width:min(220px, 100%);">
-                   <option value="SOCKET001">SOCKET001</option>
-                    <option value="SOCKET002">SOCKET002</option>
-                     <option value="SOCKET003">SOCKET003</option>
-                       <option value="SOCKET004">SOCKET004</option>
-                         </select>
+                   <select id="deviceSelect" class="form-input" style="width:min(220px, 100%);">
+                 </select>
                 </div>
 
                 <!-- Metric Cards -->
@@ -981,6 +985,57 @@
   </div>
 </div>
 
+            <!-- Devices Section -->
+<div id="devices-section" class="page-section">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Device List</h1>
+            <p class="page-subtitle">Add device IDs and assign custom display names</p>
+        </div>
+    </div>
+
+    <div id="devices-alert" style="display:none;" class="alert"></div>
+
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+            <h3 class="card-title">ADD DEVICE</h3>
+        </div>
+
+        <div class="settings-grid">
+            <div class="form-group">
+                <label class="form-label">Device ID</label>
+                <input type="text" id="newDeviceId" class="form-input" placeholder="e.g. RTSGRE3354">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Display Name</label>
+                <input type="text" id="newDeviceName" class="form-input" placeholder="e.g. FRIDGE">
+            </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="addDevice()">Add Device</button>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">SAVED DEVICES</h3>
+        </div>
+
+        <div style="overflow:auto;">
+            <table style="width:100%; border-collapse:collapse;">
+                      <thead>
+                         <tr style="text-align:left; border-bottom:1px solid #dee2e6;">
+                                <th style="padding:10px;">Display Name</th>
+                               <th style="padding:10px;">Device ID</th>
+                              <th style="padding:10px;">Actions</th>
+                         </tr>
+                     </thead>
+                      <tbody id="devicesTableBody"></tbody>
+                  </table>
+                 </div>
+               </div>
+             </div>
+            
             <!-- Settings Section -->
             <div id="settings-section" class="page-section">
                 <div class="page-header">
@@ -1113,7 +1168,8 @@
        const MQTT_PASS   = 'Emmanuel1234$';
        const WEEKDAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
        const SELECTED_DEVICE_KEY = "selectedDeviceId";
-        
+       const DEVICES_KEY = "energypro_devices";
+ 
        let selectedDeviceId = "SOCKET001";
        let lastTelemetryAt = 0;
        let offlineTimer = null;
@@ -1234,7 +1290,160 @@
                   `Last Update: ${now.toLocaleTimeString()}`;
              
      }
+//Device section tab functions
+        function loadDevices() {
+  try {
+    return JSON.parse(localStorage.getItem(DEVICES_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
 
+function saveDevices(devices) {
+  localStorage.setItem(DEVICES_KEY, JSON.stringify(devices));
+}
+
+function renderDeviceSelect() {
+  const select = document.getElementById("deviceSelect");
+  if (!select) return;
+
+  const devices = loadDevices();
+  select.innerHTML = "";
+
+  if (!devices.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No devices added";
+    select.appendChild(opt);
+    return;
+  }
+
+  devices.forEach(dev => {
+    const opt = document.createElement("option");
+    opt.value = dev.deviceId;                 // real ID
+    opt.textContent = dev.displayName;        // visible name
+    select.appendChild(opt);
+  });
+
+  const selectedExists = devices.some(d => d.deviceId === selectedDeviceId);
+  if (selectedExists) {
+    select.value = selectedDeviceId;
+  } else {
+    selectedDeviceId = devices[0].deviceId;
+    select.value = selectedDeviceId;
+    saveSelectedDevice(selectedDeviceId);
+  }
+}
+
+function renderDevicesTable() {
+  const body = document.getElementById("devicesTableBody");
+  if (!body) return;
+
+  const devices = loadDevices();
+
+  if (!devices.length) {
+    body.innerHTML = `<tr><td colspan="3" style="padding:14px; color:#6c757d;">No devices added yet.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = devices.map(dev => `
+    <tr style="border-bottom:1px solid #e9ecef;">
+      <td style="padding:10px;">${escapeHtml(dev.displayName)}</td>
+      <td style="padding:10px;">${escapeHtml(dev.deviceId)}</td>
+      <td style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="renameDevice('${dev.deviceId}')">Rename</button>
+        <button class="btn btn-danger" onclick="removeDevice('${dev.deviceId}')">Remove</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function addDevice() {
+  const idInput = document.getElementById("newDeviceId");
+  const nameInput = document.getElementById("newDeviceName");
+
+  const deviceId = idInput.value.trim();
+  const displayName = nameInput.value.trim();
+
+  if (!deviceId) {
+    showAlert("Device ID is required", "danger", "devices-alert");
+    return;
+  }
+
+  if (!displayName) {
+    showAlert("Display name is required", "danger", "devices-alert");
+    return;
+  }
+
+  const devices = loadDevices();
+  const exists = devices.some(d => d.deviceId === deviceId);
+
+  if (exists) {
+    showAlert("That device ID already exists", "danger", "devices-alert");
+    return;
+  }
+
+  devices.push({ deviceId, displayName });
+  saveDevices(devices);
+
+  idInput.value = "";
+  nameInput.value = "";
+
+  renderDevicesTable();
+  renderDeviceSelect();
+
+  showAlert("Device added successfully", "success", "devices-alert");
+}
+
+function renameDevice(deviceId) {
+  const devices = loadDevices();
+  const device = devices.find(d => d.deviceId === deviceId);
+  if (!device) return;
+
+  const newName = prompt("Enter new display name:", device.displayName);
+  if (newName === null) return;
+
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    showAlert("Display name cannot be empty", "danger", "devices-alert");
+    return;
+  }
+
+  device.displayName = trimmed;
+  saveDevices(devices);
+
+  renderDevicesTable();
+  renderDeviceSelect();
+
+  showAlert("Device renamed successfully", "success", "devices-alert");
+}
+
+function removeDevice(deviceId) {
+  if (!confirm("Remove this device from the dashboard list?")) return;
+
+  let devices = loadDevices();
+  devices = devices.filter(d => d.deviceId !== deviceId);
+  saveDevices(devices);
+
+  if (selectedDeviceId === deviceId) {
+    selectedDeviceId = devices.length ? devices[0].deviceId : "";
+    saveSelectedDevice(selectedDeviceId);
+  }
+
+  renderDevicesTable();
+  renderDeviceSelect();
+
+  if (selectedDeviceId) {
+    resetUIForNewDevice();
+    subscribeToDevice(selectedDeviceId);
+    loadSessionsLocal();
+    renderSessionsTable();
+    renderTodaysSessions();
+    startOfflineTimer();
+  }
+
+  showAlert("Device removed", "success", "devices-alert");
+}
        // (function updateValues() {
            // fetch('/data')
               //  .then(response => response.json())
@@ -1687,12 +1896,12 @@ function openSessionModal(session=null){
   const devSel = document.getElementById("sessDevice");
   const source = document.getElementById("deviceSelect");
   devSel.innerHTML = "";
-  [...source.options].forEach(opt => {
-    const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.value;
-    devSel.appendChild(o);
-  });
+[...source.options].forEach(opt => {
+  const o = document.createElement("option");
+  o.value = opt.value;
+  o.textContent = opt.textContent; // show display name
+  devSel.appendChild(o);
+});
 
   // default values
   document.getElementById("sessStart").value = session?.startTime ?? "06:00";
@@ -2162,23 +2371,36 @@ document.getElementById("deviceSelect").addEventListener("change", (e) => {
         
 // ✅ Restore saved device before anything else
   const saved = loadSelectedDevice();
-  if (saved) {
+if (saved) {
   selectedDeviceId = saved;
-  applySelectedDeviceToUI(saved);
 }
 
 
-        // Initial update and set interval
-       initMQTT();
-       loadSessionsLocal();
-       renderSessionsTable();
-       renderTodaysSessions();
+       // If there are no saved devices yet, create a default one
+const existingDevices = loadDevices();
+if (!existingDevices.length) {
+  saveDevices([
+    { deviceId: "SOCKET001", displayName: "SOCKET001" }
+  ]);
+}
 
-       //updateValues();
-      // setInterval(updateValues, 3000);
+renderDeviceSelect();
+renderDevicesTable();
 
-        // Set initial page to dashboard
-        showPage('dashboard');
+if (!selectedDeviceId) {
+  const devices = loadDevices();
+  if (devices.length) {
+    selectedDeviceId = devices[0].deviceId;
+    saveSelectedDevice(selectedDeviceId);
+  }
+}
+
+initMQTT();
+loadSessionsLocal();
+renderSessionsTable();
+renderTodaysSessions();
+showPage('dashboard');
+        
     </script>
 </body>
 </html>
