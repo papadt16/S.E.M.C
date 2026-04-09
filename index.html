@@ -434,17 +434,7 @@
             border-color: var(--secondary);
             box-shadow: 0 0 0 3px rgba(62, 146, 204, 0.1);
         }
-    .chart-container {
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  margin-top: 20px;
-}
 
-.chart-container canvas {
-  width: 100% !important;
-  height: auto !important;
-}
         /* Buttons */
         .btn {
             display: inline-block;
@@ -1168,9 +1158,7 @@
 
                   <label>Select Device:</label>
                   <select id="chartDeviceSelect"></select>
-                      <div class="chart-container">
-                      <canvas id="weeklyChart"></canvas>
-                      </div>
+                      <canvas id="weeklyChart" style="margin-top:20px;"></canvas>
                    </div>
                 </div>
             </div>
@@ -2626,7 +2614,6 @@ function renderWeeklyChart(location) {
     },
     options: {
       responsive: true
-     maintainAspectRatio: false
     }
   });
 }
