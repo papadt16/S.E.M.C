@@ -887,16 +887,18 @@
                 </div>
 
                 <div class="card-grid">
-                    <div class="card">
+                   <div class="card">
                         <div class="card-header">
                             <h3 class="card-title">POWER CONTROL</h3>
                         </div>
                         <div id="relay-control-alert" style="display:none;" class="alert"></div>
-                        <p style="margin:15px 0;">Current power status: <span id="relay-control-status">Loading...</span></p>
-                        <div style="display:flex;gap:10px;">
-                            <button id="control-power-on-btn" class="btn btn-success" onclick="setRelay(1)" style="flex:1;" disabled>Turn Power ON</button>
-                            <button id="control-power-off-btn" class="btn btn-danger" onclick="setRelay(0)" style="flex:1;" disabled>Turn Power OFF</button>
+                        
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label class="form-label">Select Location:</label>
+                            <select id="controlLocationSelect" class="form-input" onchange="renderControlGrid()"></select>
                         </div>
+
+                        <div id="relayGrid" style="margin-top: 20px;"></div>
                     </div>
 
                     <div class="card">
@@ -978,9 +980,16 @@
         <button class="btn" onclick="closeSessionModal()">✖</button>
       </div>
 
+        <div class="form-group">
+        <label class="form-label">Location</label>
+        <select id="sessLocation" class="form-input" onchange="renderSessionCheckboxes()"></select>
+      </div>
+
       <div class="form-group">
-        <label class="form-label">Device</label>
-        <select id="sessDevice" class="form-input"></select>
+        <label class="form-label">Select Devices</label>
+        <div id="sessDeviceCheckboxes" style="display:flex; flex-direction:column; gap:8px; max-height:150px; overflow-y:auto; border:1px solid var(--gray-300); padding:10px; border-radius:5px; background:var(--gray-100);">
+          <div style='color:#6c757d; font-size:13px;'>Select a location first.</div>
+        </div>
       </div>
 
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
@@ -1248,6 +1257,9 @@
             
            if (page === "reports") {
                 loadChartDevices();
+            }
+           if (page === "control") {
+                loadControlLocations();
             }
             closeSidebar();
         }
@@ -2090,15 +2102,7 @@ function openSessionModal(session=null){
   document.getElementById("sessionModalTitle").textContent = session ? "Edit Session" : "New Session";
 
   // fill devices dropdown using your existing deviceSelect options
-  const devSel = document.getElementById("sessDevice");
-  const source = document.getElementById("deviceSelect");
-  devSel.innerHTML = "";
-[...source.options].forEach(opt => {
-  const o = document.createElement("option");
-  o.value = opt.value;
-  o.textContent = opt.textContent; // show display name
-  devSel.appendChild(o);
-});
+ loadSessionLocations();
 
   // default values
   document.getElementById("sessStart").value = session?.startTime ?? "06:00";
@@ -2531,11 +2535,18 @@ if (topic.endsWith("/sessions/ack")) {
     handleTelemetry(data);
     return;
   }
-
-  // relay state updates
+ // relay state updates
   if (topic.endsWith("/relay/state")) {
     const state = (data.state !== undefined) ? data.state : data.relayState;
-    updatePowerControlUI(!!state);
+    const topicParts = topic.split('/');
+    const devId = topicParts[1]; // Extracts the device ID from the topic
+    
+    window.deviceStates[devId] = !!state; // Save to our global tracker
+    
+    // Update Control grid if it's currently open
+    if (document.getElementById('control-section').classList.contains('active')) {
+        renderControlGrid();
+    }
     return;
   }
 });
@@ -2611,6 +2622,180 @@ function renderWeeklyChart(location) {
     }
   });
 }
+
+        // ==========================================
+// NEW LOCATION-BASED LOGIC (CONTROL & SESSIONS)
+// ==========================================
+
+window.deviceStates = window.deviceStates || {}; // Global object to track relay states
+
+// --- CONTROL SECTION LOGIC ---
+function loadControlLocations() {
+    const select = document.getElementById("controlLocationSelect");
+    if (!select) return;
+    
+    const devices = loadDevices();
+    const locations = [...new Set(devices.map(d => d.location))].filter(Boolean);
+    
+    select.innerHTML = "";
+    if (!locations.length) {
+        select.innerHTML = `<option value="">No locations added</option>`;
+        document.getElementById("relayGrid").innerHTML = "";
+        return;
+    }
+    
+    locations.forEach(loc => {
+        const opt = document.createElement("option");
+        opt.value = loc;
+        opt.textContent = loc;
+        select.appendChild(opt);
+    });
+    
+    renderControlGrid();
+}
+
+function renderControlGrid() {
+    const locSelect = document.getElementById("controlLocationSelect");
+    const grid = document.getElementById("relayGrid");
+    if (!locSelect || !grid) return;
+    
+    const location = locSelect.value;
+    const devices = loadDevices().filter(d => d.location === location);
+    
+    if (!devices.length) {
+        grid.innerHTML = "<p style='color:#6c757d;'>No devices found in this location.</p>";
+        return;
+    }
+    
+    let html = `<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">`;
+    
+    devices.forEach(dev => {
+        // Check our global tracker for the latest state reported by MQTT
+        const isOn = window.deviceStates[dev.deviceId] === true; 
+        const statusColor = isOn ? "var(--accent)" : "var(--gray-500)";
+        const statusText = isOn ? "ON" : "OFF";
+        
+        html += `
+            <div style="border:1px solid var(--gray-300); border-radius:8px; padding:15px; background:white; text-align:center;">
+                <div style="width:12px; height:12px; border-radius:50%; background:${statusColor}; margin: 0 auto 10px;"></div>
+                <h4 style="margin-bottom:5px; color:var(--dark);">${escapeHtml(dev.displayName)}</h4>
+                <p style="font-size:12px; color:var(--gray-600); margin-bottom:15px;">${escapeHtml(dev.deviceId)}</p>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-success" style="flex:1; padding:6px;" onclick="toggleSpecificRelay('${dev.deviceId}', 1)" ${isOn ? 'disabled' : ''}>ON</button>
+                    <button class="btn btn-danger" style="flex:1; padding:6px;" onclick="toggleSpecificRelay('${dev.deviceId}', 0)" ${!isOn ? 'disabled' : ''}>OFF</button>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += `</div>`;
+    grid.innerHTML = html;
+}
+
+function toggleSpecificRelay(deviceId, state) {
+    if (!mqttClient || !mqttClient.connected) {
+        showAlert("MQTT not connected.", "danger", "relay-control-alert");
+        return;
+    }
+    
+    // Publish to the specific device's topic
+    mqttClient.publish(`smart_socket/${deviceId}/relay/set`, JSON.stringify({ state: !!state }));
+    showAlert(`Processing power ${state ? 'ON' : 'OFF'} for ${deviceId}...`, "warning", "relay-control-alert");
+    
+    // Optimistically update the UI to feel fast
+    window.deviceStates[deviceId] = !!state;
+    setTimeout(renderControlGrid, 300); 
+}
+
+// --- SESSIONS SECTION LOGIC ---
+function loadSessionLocations() {
+    const select = document.getElementById("sessLocation");
+    if (!select) return;
+    
+    const devices = loadDevices();
+    const locations = [...new Set(devices.map(d => d.location))].filter(Boolean);
+    
+    select.innerHTML = "";
+    locations.forEach(loc => {
+        const opt = document.createElement("option");
+        opt.value = loc;
+        opt.textContent = loc;
+        select.appendChild(opt);
+    });
+    
+    renderSessionCheckboxes();
+}
+
+function renderSessionCheckboxes() {
+    const loc = document.getElementById("sessLocation").value;
+    const container = document.getElementById("sessDeviceCheckboxes");
+    const devices = loadDevices().filter(d => d.location === loc);
+    
+    if(!devices.length) {
+        container.innerHTML = "<div style='color:#6c757d; font-size:13px;'>No devices found.</div>";
+        return;
+    }
+    
+    let html = `
+        <label style="display:flex; align-items:center; gap:8px; font-weight:600; border-bottom:1px solid var(--gray-300); padding-bottom:8px; margin-bottom:5px;">
+            <input type="checkbox" onchange="document.querySelectorAll('.sess-device-cb').forEach(cb => cb.checked = this.checked)"> Select All
+        </label>
+    `;
+    
+    devices.forEach(d => {
+        html += `
+            <label style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+                <input type="checkbox" class="sess-device-cb" value="${d.deviceId}" data-name="${d.displayName}">
+                ${escapeHtml(d.displayName)} <span style="font-size:11px; color:var(--gray-500);">(${d.deviceId})</span>
+            </label>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+// OVERRIDE the old saveSessionFromModal
+function saveSessionFromModal() {
+    const selectedCbs = Array.from(document.querySelectorAll('.sess-device-cb:checked'));
+    if (!selectedCbs.length) {
+        showAlert("Please select at least one device.", "danger", "sessions-alert");
+        return;
+    }
+
+    const start = document.getElementById("sessStart").value.trim();
+    const dur = Number(document.getElementById("sessDuration").value);
+    const days = JSON.parse(document.getElementById("sessDaysWrap").dataset.selectedDays || "[]");
+
+    if (!validateHHMM(start)) { showAlert("Invalid Start Time. Use HH:MM", "danger", "sessions-alert"); return; }
+    if (!Number.isFinite(dur) || dur <= 0) { showAlert("Invalid duration", "danger", "sessions-alert"); return; }
+    if (!days.length) { showAlert("Select at least one day", "danger", "sessions-alert"); return; }
+
+    // Create a session for EVERY checked device
+    selectedCbs.forEach(cb => {
+        const sessionObj = {
+            id: editingSessionId || uuid4(), // If editing, keep ID, else generate
+            deviceId: cb.value,
+            deviceName: cb.getAttribute('data-name'),
+            startTime: start,
+            duration: Math.floor(dur),
+            days: days.sort((a,b)=>a-b),
+        };
+        
+        if (editingSessionId) {
+            sessionsStore = sessionsStore.map(s => s.id === editingSessionId ? sessionObj : s);
+        } else {
+            sessionsStore.push(sessionObj);
+        }
+        editingSessionId = null; // Clear it so it generates new UUIDs if loop continues
+    });
+
+    saveSessionsLocal();
+    renderSessionsTable();
+    closeSessionModal();
+    pushSessionsToESP(); 
+    showAlert(`Saved session(s) successfully!`, "success", "sessions-alert");
+}
+// ==========================================
         
 initMQTT();
 loadSessionsLocal();
