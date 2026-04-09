@@ -267,7 +267,38 @@
         .status-value {
             font-weight: 600;
         }
-
+.location-group {
+    margin-bottom: 10px;
+    border: 1px solid var(--gray-300);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.location-header {
+    background-color: var(--gray-100);
+    padding: 12px 15px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    transition: background-color 0.2s;
+}
+.location-header:hover {
+    background-color: var(--gray-200);
+}
+.dropdown-arrow {
+    transition: transform 0.3s ease;
+}
+.dropdown-arrow.open {
+    transform: rotate(180deg);
+}
+.location-content {
+    display: none; /* Hidden by default */
+    padding: 0;
+}
+.location-content.show {
+    display: block; /* Shows when expanded */
+}
         .session-chip {
   display:inline-flex;
   align-items:center;
@@ -723,7 +754,7 @@
 
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                  <label style="font-size:14px;color:#555;">Device:</label>
-                   <select id="deviceSelect" class="form-input" style="width:min(220px, 100%);">
+                   <select id="dashboardLocationSelect" class="form-input" style="width:min(220px, 100%);">
                  </select>
                 </div>
 
@@ -785,30 +816,11 @@
                                 <div class="status-value" id="energy-value">-- kWh</div>
                             </div>
                         </div>
-                    </div>
-
-                    <div class="card action-card">
-                        <div class="card-header">
-                            <h3 class="card-title">QUICK ACTIONS</h3>
-                        </div>
-                        <div class="action-content">
-                            <div id="power-control-alert" style="display:none;" class="alert"></div>
-                            <p style="margin-bottom:15px;">Control power supply to your premises</p>
-                            <div style="display:flex;gap:10px;margin-bottom:20px;">
-                                <button id="power-on-btn" class="btn btn-success" onclick="setRelay(1)" style="flex:1;" disabled>Power ON</button>
-                                <button id="power-off-btn" class="btn btn-danger" onclick="setRelay(0)" style="flex:1;" disabled>Power OFF</button>
-                            </div>
-
-                            <p style="margin-bottom:15px;">Quick recharge your account</p>
-                            <div class="input-group">
-                                <input type="number" id="quick-recharge-amount" class="form-input" value="100" min="10" step="10">
-                                <div class="input-append">₦</div>
-                            </div>
-                            <button class="btn btn-primary btn-block" onclick="quickRecharge()">Recharge Now</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                   </div>
+                 </div>
+              </div>
+           </div>
+         </div>
 
             <!-- Account Section -->
             <div id="account-section" class="page-section">
@@ -1457,26 +1469,66 @@ function loadChartDevices() {
 }
         
 function renderDevicesTable() {
-  const body = document.getElementById("devicesTableBody");
-  if (!body) return;
+  // Assuming you change your HTML table to a <div> with id="devicesListContainer"
+  const container = document.getElementById("devicesTableBody"); // We will just inject the divs here to save you changing the HTML structure too much
+  if (!container) return;
 
   const devices = loadDevices();
 
   if (!devices.length) {
-    body.innerHTML = `<tr><td colspan="3" style="padding:14px; color:#6c757d;">No devices added yet.</td></tr>`;
+    container.innerHTML = `<tr><td colspan="3" style="padding:14px; text-align:center;">No devices added yet.</td></tr>`;
     return;
   }
 
-  body.innerHTML = devices.map(dev => `
-    <tr style="border-bottom:1px solid #e9ecef;">
-      <td style="padding:10px;">${escapeHtml(dev.displayName)}</td>
-      <td style="padding:10px;">${escapeHtml(dev.deviceId)}</td>
-      <td style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="renameDevice('${dev.deviceId}')">Rename</button>
-        <button class="btn btn-danger" onclick="removeDevice('${dev.deviceId}')">Remove</button>
-      </td>
-    </tr>
-  `).join("");
+  // Group devices by location
+  const grouped = {};
+  devices.forEach(dev => {
+    if (!grouped[dev.location]) grouped[dev.location] = [];
+    grouped[dev.location].push(dev);
+  });
+
+  let html = '';
+  
+  for (const [location, locDevices] of Object.entries(grouped)) {
+    // Build the header for the location
+    html += `
+      <div class="location-group">
+        <div class="location-header" onclick="toggleLocationGroup('${location.replace(/\s+/g, '-')}')">
+          <span>📍 ${escapeHtml(location)} (${locDevices.length} devices)</span>
+          <span class="dropdown-arrow" id="arrow-${location.replace(/\s+/g, '-')}">▼</span>
+        </div>
+        <div class="location-content" id="content-${location.replace(/\s+/g, '-')}">
+          <table style="width:100%; border-collapse:collapse;">
+            <tbody>
+    `;
+
+    // Build the rows for devices under this location
+    locDevices.forEach(dev => {
+      html += `
+        <tr style="border-bottom:1px solid #e9ecef;">
+          <td style="padding:10px;">${escapeHtml(dev.displayName)}</td>
+          <td style="padding:10px;">${escapeHtml(dev.deviceId)}</td>
+          <td style="padding:10px; display:flex; gap:8px;">
+            <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="renameDevice('${dev.deviceId}')">Rename</button>
+            <button class="btn btn-danger" style="padding:5px 10px; font-size:12px;" onclick="removeDevice('${dev.deviceId}')">Remove</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table></div></div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// Add this helper function to handle the click animation and toggling
+function toggleLocationGroup(locId) {
+  const content = document.getElementById(`content-${locId}`);
+  const arrow = document.getElementById(`arrow-${locId}`);
+  
+  content.classList.toggle('show');
+  arrow.classList.toggle('open');
 }
 
 function addDevice() {
@@ -1518,6 +1570,7 @@ function addDevice() {
 
   idInput.value = "";
   nameInput.value = "";
+  locationInput.value = "";
 
   renderDevicesTable();
   renderDeviceSelect();
@@ -2488,18 +2541,10 @@ setInterval(() => {
   }
 }, 60000); // every 60s
 
-document.getElementById("deviceSelect").addEventListener("change", (e) => {
-  selectedDeviceId = e.target.value;
-  saveSelectedDevice(selectedDeviceId);   // ✅ add this line
-
-  resetUIForNewDevice();
-  subscribeToDevice(selectedDeviceId);
-
-  loadSessionsLocal();
-  renderSessionsTable();
-  renderTodaysSessions();
-
-  startOfflineTimer();
+document.getElementById("dashboardLocationSelect").addEventListener("change", (e) => {
+  window.selectedLocation = e.target.value;
+  // Here we will eventually add the logic to aggregate power/energy for all devices in window.selectedLocation
+  console.log("Dashboard now viewing location:", window.selectedLocation);
 });
         
 // ✅ Restore saved device before anything else
