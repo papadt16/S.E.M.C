@@ -1468,68 +1468,66 @@ function loadChartDevices() {
 }
         
 function renderDevicesTable() {
-  const container = document.getElementById("devicesTableBody");
+  // Assuming you change your HTML table to a <div> with id="devicesListContainer"
+  const container = document.getElementById("devicesTableBody"); // We will just inject the divs here to save you changing the HTML structure too much
   if (!container) return;
 
   const devices = loadDevices();
 
-  if (!devices || devices.length === 0) {
+  if (!devices.length) {
     container.innerHTML = `<tr><td colspan="3" style="padding:14px; text-align:center;">No devices added yet.</td></tr>`;
     return;
   }
 
   // Group devices by location
-  const grouped = devices.reduce((acc, dev) => {
-    const loc = dev.location || "Unassigned";
-    if (!acc[loc]) acc[loc] = [];
-    acc[loc].push(dev);
-    return acc;
-  }, {});
+  const grouped = {};
+  devices.forEach(dev => {
+    if (!grouped[dev.location]) grouped[dev.location] = [];
+    grouped[dev.location].push(dev);
+  });
 
   let html = '';
-
+  
   for (const [location, locDevices] of Object.entries(grouped)) {
-    // Create a safe ID by removing non-alphanumeric characters
-    const safeId = location.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-
+    // Build the header for the location
     html += `
-      <div class="location-group" style="margin-bottom: 10px;">
-        <div class="location-header" onclick="toggleLocationGroup('${safeId}')">
-          <span>📍 ${escapeHtml(location)} (${locDevices.length})</span>
-          <span class="dropdown-arrow" id="arrow-${safeId}">▼</span>
+      <div class="location-group">
+        <div class="location-header" onclick="toggleLocationGroup('${location.replace(/\s+/g, '-')}')">
+          <span>📍 ${escapeHtml(location)} (${locDevices.length} devices)</span>
+          <span class="dropdown-arrow" id="arrow-${location.replace(/\s+/g, '-')}">▼</span>
         </div>
-        
-        <div class="location-content" id="content-${safeId}">
-          <table style="width:100%; border-collapse:collapse; background: #fff;">
+        <div class="location-content" id="content-${location.replace(/\s+/g, '-')}">
+          <table style="width:100%; border-collapse:collapse;">
             <tbody>
-              ${locDevices.map(dev => `
-                <tr style="border-bottom:1px solid #e9ecef;">
-                  <td style="padding:10px;">${escapeHtml(dev.displayName)}</td>
-                  <td style="padding:10px; color: #666; font-size: 0.9em;">${escapeHtml(dev.deviceId)}</td>
-                  <td style="padding:10px; text-align: right;">
-                    <button class="btn btn-primary" onclick="renameDevice('${dev.deviceId}')">Rename</button>
-                    <button class="btn btn-danger" onclick="removeDevice('${dev.deviceId}')">Remove</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
     `;
+
+    // Build the rows for devices under this location
+    locDevices.forEach(dev => {
+      html += `
+        <tr style="border-bottom:1px solid #e9ecef;">
+          <td style="padding:10px;">${escapeHtml(dev.displayName)}</td>
+          <td style="padding:10px;">${escapeHtml(dev.deviceId)}</td>
+          <td style="padding:10px; display:flex; gap:8px;">
+            <button class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="renameDevice('${dev.deviceId}')">Rename</button>
+            <button class="btn btn-danger" style="padding:5px 10px; font-size:12px;" onclick="removeDevice('${dev.deviceId}')">Remove</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table></div></div>`;
   }
 
   container.innerHTML = html;
 }
 
+// Add this helper function to handle the click animation and toggling
 function toggleLocationGroup(locId) {
   const content = document.getElementById(`content-${locId}`);
   const arrow = document.getElementById(`arrow-${locId}`);
   
-  if (content && arrow) {
-    content.classList.toggle('show');
-    arrow.classList.toggle('open');
-  }
+  content.classList.toggle('show');
+  arrow.classList.toggle('open');
 }
 
 function addDevice() {
