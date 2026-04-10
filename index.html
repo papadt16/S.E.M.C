@@ -1202,8 +1202,20 @@
                                <div style="position: relative; height: 350px; max-width: 800px; margin: 0 auto; width: 100%; border: 1px solid var(--gray-200); padding: 10px; border-radius: 8px; background: white;">
                                <canvas id="weeklyChart" class="chart-canvas slide-center"></canvas>
                              </div>
+                                
                             </div>
                             </div>
+                        <div class="card" style="margin-top: 25px; border-left: 4px solid var(--accent);">
+                    <div class="card-header">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="font-size: 20px;">🧠</span>
+                            <h3 class="card-title">SMART INSIGHTS & SUGGESTIONS</h3>
+                        </div>
+                    </div>
+                    <div id="ai-insights-container" style="padding: 15px 0;">
+                        <p style="color: var(--gray-600); font-size: 14px;">Analyzing your energy patterns...</p>
+                    </div>
+                </div>
                    </div>
                 </div>
             </div>
@@ -1296,10 +1308,12 @@
                    renderTodaysSessions();
             }
             
-           if (page === "reports") {
+          if (page === "reports") {
                 loadChartDevices();
+                generateSmartInsights(); // <-- ADD THIS LINE
             }
-           if (page === "control") {
+            
+          if (page === "control") {
                 loadControlLocations();
             }
             closeSidebar();
@@ -2951,6 +2965,129 @@ function saveSessionFromModal() {
     showAlert(`Saved session(s) successfully!`, "success", "sessions-alert");
 }
 // ==========================================
+// ==========================================
+// AI ANALYTICS & SUGGESTIONS ENGINE
+// ==========================================
+
+// Rough estimates of appliance wattages for our AI to guess percentage impacts
+const APPLIANCE_DICTIONARY = {
+    "light": 30, "bulb": 30, "lamp": 30,
+    "fan": 60,
+    "tv": 150, "television": 150,
+    "fridge": 400, "refrigerator": 400,
+    "ac": 1500, "aircon": 1500, "heater": 1500,
+    "kettle": 2000, "iron": 1000, "microwave": 1200
+};
+
+function generateSmartInsights() {
+    const container = document.getElementById("ai-insights-container");
+    if (!container) return;
+
+    const devices = loadDevices();
+    const locations = [...new Set(devices.map(d => d.location))].filter(Boolean);
+    const costPerKWh = Number(document.getElementById("costPerKWh").value) || 0;
+    
+    if (!locations.length) {
+        container.innerHTML = `<p style="color:var(--gray-600);">Not enough data to generate insights. Add devices and locations first.</p>`;
+        return;
+    }
+
+    // 1. Calculate this week's totals across ALL locations
+    let locationTotals = {};
+    let grandTotalKWh = 0;
+
+    locations.forEach(loc => {
+        const data = getWeeklyDataByLocation(loc, 0).data; // 0 = this week
+        const totalForLoc = data.reduce((a, b) => a + b, 0);
+        locationTotals[loc] = totalForLoc;
+        grandTotalKWh += totalForLoc;
+    });
+
+    const grandTotalCost = grandTotalKWh * costPerKWh;
+
+    // 2. Find the highest consuming location
+    let topLocation = "";
+    let topConsumption = -1;
+    for (const [loc, val] of Object.entries(locationTotals)) {
+        if (val > topConsumption) {
+            topConsumption = val;
+            topLocation = loc;
+        }
+    }
+
+    let insightsHTML = `<div style="display:flex; flex-direction:column; gap:15px;">`;
+
+    // --- INSIGHT 1: Financial Overview ---
+    if (grandTotalKWh > 0) {
+        let topPercentage = Math.round((topConsumption / grandTotalKWh) * 100);
+        insightsHTML += `
+            <div style="background: var(--gray-100); padding: 12px; border-radius: 8px;">
+                <strong style="color: var(--primary);">💰 Weekly Cost Overview:</strong><br>
+                <span style="font-size:14px;">Your total energy across all locations this week cost roughly <b>₦${grandTotalCost.toFixed(2)}</b>. The <b>${topLocation}</b> is your highest consumer, making up <b>${topPercentage}%</b> of your total bill.</span>
+            </div>
+        `;
+    }
+
+    // --- INSIGHT 2: Daylight Lighting Detection (Using Sessions) ---
+    let daytimeLightFound = false;
+    if (Array.isArray(sessionsStore)) {
+        sessionsStore.forEach(session => {
+            const devName = (session.deviceName || "").toLowerCase();
+            const isLight = devName.includes("light") || devName.includes("bulb") || devName.includes("lamp");
+            
+            if (isLight) {
+                const startMins = parseHHMMToMinutes(session.startTime);
+                // If scheduled between 8:00 AM (480) and 4:00 PM (960)
+                if (startMins !== null && startMins >= 480 && startMins <= 960) {
+                    daytimeLightFound = true;
+                    insightsHTML += `
+                        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; border: 1px solid #ffeeba;">
+                            <strong style="color: #856404;">☀️ Daylight Optimization:</strong><br>
+                            <span style="font-size:14px; color: #664d03;">You have a scheduled session for <b>${escapeHtml(session.deviceName)}</b> during daylight hours (${session.startTime}). Since bulbs average 30W-60W, disabling this daytime schedule could shave <b>~2-3%</b> off your total weekly cost.</span>
+                        </div>
+                    `;
+                }
+            }
+        });
+    }
+
+    // --- INSIGHT 3: Appliance-Based Percentage Estimates ---
+    if (topLocation) {
+        const topLocDevices = devices.filter(d => d.location === topLocation);
+        let heaviestAppliance = null;
+        let highestEstWattage = 0;
+
+        // Guess the heaviest appliance in the top location
+        topLocDevices.forEach(dev => {
+            const nameObj = dev.displayName.toLowerCase();
+            for (const [key, watts] of Object.entries(APPLIANCE_DICTIONARY)) {
+                if (nameObj.includes(key) && watts > highestEstWattage) {
+                    highestEstWattage = watts;
+                    heaviestAppliance = dev.displayName;
+                }
+            }
+        });
+
+        if (heaviestAppliance && highestEstWattage > 100) {
+            // Rough math: heavy appliances usually dominate the location's percentage
+            let estimatedSavings = highestEstWattage > 1000 ? "15-20%" : "5-10%";
+            insightsHTML += `
+                <div style="background: #d4edda; padding: 12px; border-radius: 8px; border: 1px solid #c3e6cb;">
+                    <strong style="color: #155724;">🔌 Appliance Efficiency:</strong><br>
+                    <span style="font-size:14px; color: #0f5132;">In your highest consuming location (${topLocation}), the <b>${escapeHtml(heaviestAppliance)}</b> is likely the main driver. Reducing its runtime by just 1 hour a day could drop your total bill by <b>${estimatedSavings}</b>.</span>
+                </div>
+            `;
+        }
+    }
+
+    // Fallback if no specific insights matched
+    if (insightsHTML === `<div style="display:flex; flex-direction:column; gap:15px;">`) {
+        insightsHTML += `<div style="font-size:14px; color:var(--gray-600);">Keep your devices running to gather more tailored insights!</div>`;
+    }
+
+    insightsHTML += `</div>`;
+    container.innerHTML = insightsHTML;
+}
         
 initMQTT();
 loadSessionsLocal();
