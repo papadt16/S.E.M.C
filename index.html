@@ -1204,9 +1204,9 @@
                                     <button class="btn" onclick="changeWeek(-1)" id="nextWeekBtn" disabled>Next ➡️</button>
                                 </div>
                                 
-                                <div style="position: relative; height: 350px; width: 100%;">
-                                    <canvas id="weeklyChart" class="chart-canvas slide-center"></canvas>
-                                </div>
+                               <div style="position: relative; height: 300px; max-width: 450px; margin: 0 auto; width: 100%; border: 1px solid var(--gray-200); padding: 10px; border-radius: 8px; background: white;">
+                               <canvas id="weeklyChart" class="chart-canvas slide-center"></canvas>
+                             </div>
                             </div>
                             </div>
                    </div>
@@ -2755,8 +2755,6 @@ if (!selectedDeviceId) {
     saveSelectedDevice(selectedDeviceId);
   }
 }
-let weeklyChart;
-
         // ==========================================
 // NEW LOCATION-BASED LOGIC (CONTROL & SESSIONS)
 // ==========================================
