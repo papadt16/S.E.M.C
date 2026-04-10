@@ -2522,26 +2522,21 @@ function waitForSessionsAck(){
            let mqttClient = null;
            let currentSubs = [];
            
-function subscribeToDevice(id){
+function subscribeToUniversal(){
   if (!mqttClient || !mqttClient.connected) return;
-
-  // unsubscribe old topics (including old ack topics)
   currentSubs.forEach(t => mqttClient.unsubscribe(t));
   currentSubs = [];
 
-  const t1 = topicTelemetry(id);
-  const t2 = topicRelayState(id);
-
-  const ack1 = `smart_socket/${id}/sessions/ack`;
-  const ack2 = `smart_socket/SOCKET001/sessions/ack`; // legacy
-
-  const newSubs = [t1, t2, ack1, ack2];
+  // The '+' is an MQTT wildcard. It listens to ALL devices at once!
+  const newSubs = [
+    "smart_socket/+/telemetry",
+    "smart_socket/+/relay/state",
+    "smart_socket/+/sessions/ack"
+  ];
 
   newSubs.forEach(t => mqttClient.subscribe(t));
-
   currentSubs = newSubs;
-
-  console.log("📡 Subscribed to:", currentSubs);
+  console.log("📡 Subscribed to ALL devices:", currentSubs);
 }
 
         function parseHHMMToMinutes(hhmm){
@@ -2661,68 +2656,52 @@ function initMQTT() {
 
 mqttClient.on("connect", () => {
   console.log("✅ MQTT connected");
-
-  // ensure UI shows the restored selection (if any)
-  const sel = document.getElementById("deviceSelect");
-  if (sel) {
-    applySelectedDeviceToUI(selectedDeviceId); // sets dropdown to saved device if it exists
-    selectedDeviceId = sel.value;              // now selectedDeviceId matches the UI
-    saveSelectedDevice(selectedDeviceId);      // re-save for consistency
-  }
-
-  subscribeToDevice(selectedDeviceId);
-  startOfflineTimer();
+  subscribeToUniversal(); // <-- Uses the new wildcard logic
 });
 
-
-  mqttClient.on("message", (topic, payload) => {
+mqttClient.on("message", (topic, payload) => {
   const msg = payload.toString();
-  console.log("📩 MQTT message:", topic, msg);
 
-   // --- NEW: Track when we last saw this specific device ---
+  // Global trackers
   window.deviceLastSeen = window.deviceLastSeen || {};
+  window.liveDeviceData = window.liveDeviceData || {};
+
+  // Extract the exact device ID from the topic string
   const topicParts = topic.split('/');
-  if (topicParts.length >= 2) {
-      window.deviceLastSeen[topicParts[1]] = Date.now();
-  }
-      
+  if (topicParts.length < 2) return;
+  const devId = topicParts[1]; 
+
+  // Mark this specific device as ONLINE!
+  window.deviceLastSeen[devId] = Date.now(); 
+
   let data;
-  try {
-    data = JSON.parse(msg);
-  } catch (e) {
-    console.error("❌ JSON parse error:", e, msg);
+  try { data = JSON.parse(msg); } catch (e) { return; }
+
+  if (topic.endsWith("/sessions/ack")) {
+    if (data && (data.ok === true || data.success === true)) window.lastSessionsAckOk = true;
     return;
   }
-      
-if (topic.endsWith("/sessions/ack")) {
-  // ESP sends {"ok":true,...}
-  if (data && (data.ok === true || data.success === true)) {
-    window.lastSessionsAckOk = true;
-  }
-  return;
-}
 
-  // ✅ Handle telemetry by topic OR by deviceId inside payload
-  if (topic.endsWith("/telemetry")) {
-    // if payload has deviceId, use it to route correctly
-    if (data.deviceId && data.deviceId !== selectedDeviceId) return;
-
-    handleTelemetry(data);
-    return;
-  }
- // relay state updates
   if (topic.endsWith("/relay/state")) {
     const state = (data.state !== undefined) ? data.state : data.relayState;
-    const topicParts = topic.split('/');
-    const devId = topicParts[1]; // Extracts the device ID from the topic
-    
-    window.deviceStates[devId] = !!state; // Save to our global tracker
-    
-    // Update Control grid if it's currently open
+    window.deviceStates[devId] = !!state;
+
     if (document.getElementById('control-section').classList.contains('active')) {
         renderControlGrid();
     }
     return;
+  }
+
+  if (topic.endsWith("/telemetry")) {
+    window.liveDeviceData[devId] = data; // Save the raw data
+
+    if (data.energy !== undefined) {
+        storeDailyEnergy(devId, Number(data.energy)); // Store history
+    }
+
+    if (document.getElementById('dashboard-section').classList.contains('active')) {
+        updateLocationDashboard(); // Update the UI
+    }
   }
 });
 
@@ -2743,9 +2722,15 @@ setInterval(() => {
 
 document.getElementById("dashboardLocationSelect").addEventListener("change", (e) => {
   window.selectedLocation = e.target.value;
-  // Here we will eventually add the logic to aggregate power/energy for all devices in window.selectedLocation
-  console.log("Dashboard now viewing location:", window.selectedLocation);
+  updateLocationDashboard(); 
 });
+
+// Add this directly below it to automatically catch devices going offline
+setInterval(() => {
+    if (document.getElementById('dashboard-section').classList.contains('active')) {
+        updateLocationDashboard();
+    }
+}, 5000);
         
 // ✅ Restore saved device before anything else
   const saved = loadSelectedDevice();
@@ -2771,6 +2756,62 @@ if (!selectedDeviceId) {
     selectedDeviceId = devices[0].deviceId;
     saveSelectedDevice(selectedDeviceId);
   }
+}
+
+        function updateLocationDashboard() {
+    const locSelect = document.getElementById("dashboardLocationSelect");
+    if (!locSelect) return;
+    const currentLoc = locSelect.value;
+
+    const devicesInLoc = loadDevices().filter(d => d.location === currentLoc);
+
+    let totalPower = 0, totalCurrent = 0, avgVoltage = 0, totalBalance = 0, totalEnergy = 0;
+    let validVoltageCount = 0, anyOnline = false;
+
+    // Aggregate data ONLY for online devices in this location
+    devicesInLoc.forEach(dev => {
+        const lastSeen = window.deviceLastSeen[dev.deviceId] || 0;
+        if ((Date.now() - lastSeen) < 15000) {
+            anyOnline = true;
+            const data = window.liveDeviceData[dev.deviceId] || {};
+            
+            totalPower += Number(data.power || 0);
+            totalCurrent += Number(data.current || 0);
+            totalBalance += Number(data.balance || 0);
+            totalEnergy += Number(data.energy || 0);
+
+            if (data.voltage) {
+                avgVoltage += Number(data.voltage);
+                validVoltageCount++;
+            }
+        }
+    });
+
+    if (validVoltageCount > 0) avgVoltage = avgVoltage / validVoltageCount;
+
+    // If everything in this location is offline, show blanks
+    if (!anyOnline) {
+         updateElement('power-status', 'OFFLINE');
+         updateStatusIndicator('power-indicator', 'status-inactive');
+         updateElement('balance', `--<span class="unit">₦</span>`);
+         updateElement('voltage', `--<span class="unit">V</span>`);
+         updateElement('current', `--<span class="unit">A</span>`);
+         updateElement('power',   `--<span class="unit">W</span>`);
+         updateElement('energy-value', `-- kWh`);
+         document.getElementById('update-timestamp').textContent = `Last updated: OFFLINE`;
+         return;
+    }
+
+    // Push combined data to UI
+    updateElement('power-status', 'ONLINE');
+    updateStatusIndicator('power-indicator', 'status-active');
+    updateElement('balance', `${totalBalance.toFixed(2)}<span class="unit">₦</span>`);
+    updateElement('voltage', `${avgVoltage.toFixed(1)}<span class="unit">V</span>`);
+    updateElement('current', `${totalCurrent.toFixed(3)}<span class="unit">A</span>`);
+    updateElement('power',   `${totalPower.toFixed(1)}<span class="unit">W</span>`);
+    updateElement('energy-value', `${totalEnergy.toFixed(3)} kWh`);
+
+    document.getElementById('update-timestamp').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
 }
         // ==========================================
 // NEW LOCATION-BASED LOGIC (CONTROL & SESSIONS)
