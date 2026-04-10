@@ -1038,6 +1038,23 @@
         <button class="btn" onclick="closeSessionModal()">Cancel</button>
         <button class="btn btn-success" onclick="saveSessionFromModal()">Save</button>
       </div>
+        <div id="insightsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:center; justify-content:center;">
+      <div style="width:min(600px, 92vw); max-height: 85vh; background:white; border-radius:12px; padding:20px; box-shadow:0 10px 30px rgba(0,0,0,.2); display:flex; flex-direction:column;">
+          
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom: 1px solid var(--gray-200); padding-bottom: 10px;">
+              <div style="display:flex; align-items:center; gap:10px;">
+                  <span style="font-size: 24px;">🧠</span>
+                  <h3 style="margin:0; color:var(--dark);">AI Analytics & Suggestions</h3>
+              </div>
+              <button class="btn" style="padding: 5px 10px;" onclick="closeInsightsModal()">✖</button>
+          </div>
+
+          <div id="ai-insights-container" style="overflow-y:auto; padding-right:5px; flex-grow: 1;">
+              <p style="color: var(--gray-600); font-size: 14px;">Analyzing your energy patterns...</p>
+          </div>
+
+      </div>
+  </div>
     </div>
   </div>
 </div>
@@ -1167,22 +1184,14 @@
 
             <!-- Reports Section (placeholder) -->
            <div id="reports-section" class="page-section">
-                <div class="page-header">
+               <div class="page-header">
                     <div>
                         <h1 class="page-title">Reports & Analytics</h1>
                         <p class="page-subtitle">View energy consumption reports and analytics</p>
                     </div>
-                </div>
-                    <div class="card" style="margin-top: 20px; border-left: 4px solid var(--accent);">
-                    <div class="card-header">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="font-size: 18px;">🧠</span>
-                            <h3 class="card-title">SMART INSIGHTS & SUGGESTIONS</h3>
-                        </div>
-                    </div>
-                    <div id="ai-insights-container" style="padding: 15px 0;">
-                        <p style="color: var(--gray-600); font-size: 14px;">Analyzing your energy patterns...</p>
-                    </div>
+                    <button class="btn btn-primary" style="display:flex; align-items:center; gap:8px;" onclick="openInsightsModal()">
+                        <span style="font-size:16px;">🧠</span> Smart Insights
+                    </button>
                 </div>
                
                 <div class="card">
@@ -3087,6 +3096,15 @@ function generateSmartInsights() {
 
     insightsHTML += `</div>`;
     container.innerHTML = insightsHTML;
+}
+        
+        function openInsightsModal() {
+    generateSmartInsights(); // Run the math right before opening so it's perfectly up-to-date
+    document.getElementById("insightsModal").style.display = "flex";
+}
+
+function closeInsightsModal() {
+    document.getElementById("insightsModal").style.display = "none";
 }
         
 initMQTT();
