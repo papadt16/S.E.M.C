@@ -140,6 +140,35 @@
             margin-top: 5px;
         }
 
+        /* Chart Animation Classes */
+.chart-canvas {
+    transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+}
+.slide-left { transform: translateX(-30px); opacity: 0; }
+.slide-right { transform: translateX(30px); opacity: 0; }
+.slide-center { transform: translateX(0); opacity: 1; }
+
+/* History List Styling */
+.history-item {
+    padding: 10px 15px;
+    margin-bottom: 8px;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: var(--transition);
+}
+.history-item:hover {
+    background: var(--gray-200);
+}
+.history-item.active {
+    background: var(--secondary);
+    color: white;
+    border-color: var(--secondary);
+    font-weight: 600;
+}
+        
         /* Cards & Grids */
         .card-grid {
             display: grid;
@@ -1142,7 +1171,7 @@
             </div>
 
             <!-- Reports Section (placeholder) -->
-            <div id="reports-section" class="page-section">
+           <div id="reports-section" class="page-section">
                 <div class="page-header">
                     <div>
                         <h1 class="page-title">Reports & Analytics</h1>
@@ -1155,10 +1184,32 @@
                         <h3 class="card-title">ENERGY CONSUMPTION</h3>
                     </div>
                     <div style="padding:20px;">
+                        
+                        <div class="form-group">
+                            <label class="form-label">Select Location:</label>
+                            <select id="chartDeviceSelect" class="form-input"></select>
+                        </div>
 
-                  <label>Select Device:</label>
-                  <select id="chartDeviceSelect"></select>
-                      <canvas id="weeklyChart" style="margin-top:20px;"></canvas>
+                        <div style="display: flex; gap: 20px; flex-wrap: wrap-reverse; margin-top: 20px;">
+                            
+                            <div style="flex: 1; min-width: 240px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
+                                <h4 style="margin-bottom: 12px; color: var(--gray-700); font-size: 14px;">Chart History (12 Weeks)</h4>
+                                <div id="historyListContainer"></div>
+                            </div>
+
+                            <div style="flex: 3; min-width: 300px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                    <button class="btn" onclick="changeWeek(1)">⬅️ Previous</button>
+                                    <span id="currentChartDateRange" style="font-weight: 600; color: var(--primary); font-size: 14px;"></span>
+                                    <button class="btn" onclick="changeWeek(-1)" id="nextWeekBtn" disabled>Next ➡️</button>
+                                </div>
+                                
+                                <div style="position: relative; height: 350px; width: 100%;">
+                                    <canvas id="weeklyChart" class="chart-canvas slide-center"></canvas>
+                                </div>
+                            </div>
+
+                        </div>
                    </div>
                 </div>
             </div>
@@ -1404,34 +1455,90 @@ function storeDailyEnergy(deviceId, energyValue) {
   return result;
 }
 
-        function getWeeklyDataByLocation(location) {
+// --- REPORTS & CHART LOGIC ---
+let weeklyChart;
+let currentWeekOffset = 0; // 0 = this week, 1 = last week, etc.
+
+function getWeeklyDataByLocation(location, offsetWeeks = 0) {
   const history = JSON.parse(localStorage.getItem(ENERGY_HISTORY_KEY)) || {};
   const devices = loadDevices();
-
-  const deviceIds = devices
-    .filter(d => d.location === location)
-    .map(d => d.deviceId);
+  const deviceIds = devices.filter(d => d.location === location).map(d => d.deviceId);
 
   let result = [];
+  let labels = [];
+
+  let baseDate = new Date();
+  baseDate.setDate(baseDate.getDate() - (offsetWeeks * 7));
 
   for (let i = 6; i >= 0; i--) {
-    let d = new Date();
+    let d = new Date(baseDate);
     d.setDate(d.getDate() - i);
-
+    
     let key = d.toISOString().split("T")[0];
+    let labelDate = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); 
+
+    labels.push(labelDate); // Outputs "07 Apr" instead of just "Mon"
 
     let total = 0;
-
     deviceIds.forEach(id => {
       if (history[id] && history[id][key]) {
         total += history[id][key];
       }
     });
-
     result.push(total);
   }
 
-  return result;
+  // Calculate range string for the UI (e.g. 07/04/2026 - 13/04/2026)
+  let startRange = new Date(baseDate);
+  startRange.setDate(startRange.getDate() - 6);
+  let rangeStr = `${startRange.toLocaleDateString('en-GB')} - ${baseDate.toLocaleDateString('en-GB')}`;
+
+  return { data: result, labels: labels, rangeStr: rangeStr };
+}
+
+function renderWeeklyChart(location) {
+  const chartData = getWeeklyDataByLocation(location, currentWeekOffset);
+
+  document.getElementById("currentChartDateRange").textContent = chartData.rangeStr;
+  
+  const ctx = document.getElementById('weeklyChart');
+
+  // Trigger animation state
+  ctx.classList.remove('slide-center');
+  
+  setTimeout(() => {
+    if (weeklyChart) {
+      weeklyChart.destroy();
+    }
+
+    weeklyChart = new Chart(ctx.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: chartData.labels,
+        datasets: [{
+          label: `Energy (${location}) kWh`,
+          data: chartData.data,
+          backgroundColor: '#3e92cc',
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false, // CRITICAL FIX: prevents layout breaking
+        scales: {
+          y: { beginAtZero: true }
+        }
+      }
+    });
+    
+    // Slide it back in
+    ctx.classList.add('slide-center');
+  }, 50);
+
+  // Disable 'Next' if we are currently looking at this week
+  document.getElementById("nextWeekBtn").disabled = (currentWeekOffset === 0);
+  
+  renderHistoryList();
 }
 
 function loadChartDevices() {
@@ -1439,10 +1546,10 @@ function loadChartDevices() {
   if (!select) return;
 
   const devices = loadDevices();
-
-  const locations = [...new Set(devices.map(d => d.location))];
+  const locations = [...new Set(devices.map(d => d.location))].filter(Boolean);
 
   select.innerHTML = "";
+  if (!locations.length) return;
 
   locations.forEach(loc => {
     const opt = document.createElement("option");
@@ -1452,11 +1559,68 @@ function loadChartDevices() {
   });
 
   select.onchange = function () {
+    currentWeekOffset = 0; // Reset to this week when changing locations
     renderWeeklyChart(this.value);
   };
 
   renderWeeklyChart(locations[0]);
 }
+
+function changeWeek(direction) {
+  const canvas = document.getElementById('weeklyChart');
+  
+  // Set exit animation direction
+  if(direction > 0) canvas.classList.add('slide-right');
+  else canvas.classList.add('slide-left');
+
+  setTimeout(() => {
+    currentWeekOffset += direction;
+    if (currentWeekOffset < 0) currentWeekOffset = 0;
+    if (currentWeekOffset > 11) currentWeekOffset = 11; // 12 weeks max (3 months)
+
+    canvas.classList.remove('slide-left', 'slide-right');
+    renderWeeklyChart(document.getElementById("chartDeviceSelect").value);
+  }, 250); // wait for exit animation to finish
+}
+
+function renderHistoryList() {
+  const container = document.getElementById("historyListContainer");
+  if(!container) return;
+
+  let html = "";
+  // Generate the last 12 weeks
+  for(let i = 0; i < 12; i++) {
+    let endDate = new Date();
+    endDate.setDate(endDate.getDate() - (i * 7));
+    let startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 6);
+
+    let rangeStr = `${startDate.toLocaleDateString('en-GB')} - ${endDate.toLocaleDateString('en-GB')}`;
+    let activeClass = (i === currentWeekOffset) ? "active" : "";
+    let label = (i === 0) ? `This Week: ` : `Week -${i}: `;
+
+    html += `<div class="history-item ${activeClass}" onclick="jumpToWeek(${i})">
+                <strong>${label}</strong><br>${rangeStr}
+             </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function jumpToWeek(offset) {
+  const oldOffset = currentWeekOffset;
+  currentWeekOffset = offset;
+  
+  const canvas = document.getElementById('weeklyChart');
+  // Determine slide direction based on jump
+  if(offset > oldOffset) canvas.classList.add('slide-right');
+  else canvas.classList.add('slide-left');
+  
+  setTimeout(() => {
+      canvas.classList.remove('slide-left', 'slide-right');
+      renderWeeklyChart(document.getElementById("chartDeviceSelect").value);
+  }, 250);
+}
+// --- END REPORTS & CHART LOGIC ---
         
         function getDevicesByLocation() {
   const devices = loadDevices();
@@ -2593,30 +2757,6 @@ if (!selectedDeviceId) {
   }
 }
 let weeklyChart;
-
-function renderWeeklyChart(location) {
-  const data = getWeeklyDataByLocation(location);
-
-  const ctx = document.getElementById('weeklyChart').getContext('2d');
-
-  if (weeklyChart) {
-    weeklyChart.destroy();
-  }
-
-  weeklyChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
-      datasets: [{
-        label: `Energy (${location})`,
-        data: data
-      }]
-    },
-    options: {
-      responsive: true
-    }
-  });
-}
 
         // ==========================================
 // NEW LOCATION-BASED LOGIC (CONTROL & SESSIONS)
