@@ -668,7 +668,15 @@
 }
 
 
-/* Mobile behavior */
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+#auth-loading {
+    text-align: center;
+}
+        
 /* Mobile behavior */
 @media (max-width: 992px) {
   .mobile-topbar {
@@ -747,10 +755,15 @@
     </style>
 </head>
 <body>
-    <div id="auth-overlay">
-    <div class="auth-card">
+   <div id="auth-overlay">
+    <div id="auth-loading">
+        <div style="font-size: 45px; margin-bottom: 10px; animation: pulse 1.5s infinite;">⚡</div>
+        <h2 style="color: var(--primary);">Loading EnergyPro...</h2>
+    </div>
+
+    <div class="auth-card" id="auth-form-container" style="display: none;">
         <div style="font-size: 45px; margin-bottom: 10px;">⚡</div>
-        <h2 id="auth-title">Login to DTEnergy</h2>
+        <h2 id="auth-title">Login to EnergyPro</h2>
         <div id="auth-error" style="color: var(--danger); font-size: 13px; margin-bottom: 15px; display: none;"></div>
         
         <div class="form-group" style="text-align: left;">
@@ -763,7 +776,7 @@
         </div>
         
         <button class="btn btn-primary btn-block" id="auth-submit-btn" onclick="handleAuth()">Login</button>
-        <div class="auth-toggle" onclick="toggleAuthMode()">Don't have an account? Sign Up</div>
+        <div class="auth-toggle" onclick="toggleAuthMode()">Need an account? Sign Up</div>
     </div>
 </div>
     
@@ -1392,7 +1405,11 @@ function logoutUser() {
 }
 
 // Global Auth State Listener
+// Global Auth State Listener
 auth.onAuthStateChanged((user) => {
+    // 1. Hide the loading spinner immediately
+    document.getElementById("auth-loading").style.display = "none";
+
     if (user) {
         // User is logged in!
         currentUser = user;
@@ -1405,6 +1422,7 @@ auth.onAuthStateChanged((user) => {
         // User is logged out!
         currentUser = null;
         document.getElementById("auth-overlay").style.display = "flex";
+        document.getElementById("auth-form-container").style.display = "block"; // Show the login form
         
         // Reset the login button state just in case
         const btn = document.getElementById("auth-submit-btn");
