@@ -706,9 +706,67 @@
     font-size: 20px;
   }
 }
+
+    /* Authentication Overlay Styles */
+#auth-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--gray-100);
+    z-index: 99999; /* Keeps it strictly on top of everything */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-card {
+    background: white;
+    padding: 35px 30px;
+    border-radius: 12px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+    width: min(400px, 90vw);
+    text-align: center;
+}
+
+.auth-card h2 {
+    color: var(--primary);
+    margin-bottom: 25px;
+}
+
+.auth-toggle {
+    font-size: 14px;
+    color: var(--secondary);
+    cursor: pointer;
+    margin-top: 20px;
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.auth-toggle:hover {
+    color: var(--primary);
+}
     </style>
 </head>
 <body>
+    <div id="auth-overlay">
+    <div class="auth-card">
+        <div style="font-size: 45px; margin-bottom: 10px;">⚡</div>
+        <h2 id="auth-title">Login to EnergyPro</h2>
+        <div id="auth-error" style="color: var(--danger); font-size: 13px; margin-bottom: 15px; display: none;"></div>
+        
+        <div class="form-group" style="text-align: left;">
+            <label class="form-label">Email Address</label>
+            <input type="email" id="auth-email" class="form-input" placeholder="user@example.com">
+        </div>
+        <div class="form-group" style="text-align: left;">
+            <label class="form-label">Password</label>
+            <input type="password" id="auth-password" class="form-input" placeholder="••••••••">
+        </div>
+        
+        <button class="btn btn-primary btn-block" id="auth-submit-btn" onclick="handleAuth()">Login</button>
+        <div class="auth-toggle" onclick="toggleAuthMode()">Need an account? Sign Up</div>
+    </div>
+</div>
+    
     <!-- Mobile Topbar -->
 <div class="mobile-topbar">
   <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle menu">
@@ -777,6 +835,12 @@
                     <a href="#help" class="nav-link" onclick="showPage('help')">
                         <span class="nav-icon">❓</span>
                         <span>Help</span>
+                    </a>
+                </li>
+                <li class="nav-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                    <a href="#" class="nav-link" onclick="logoutUser()">
+                        <span class="nav-icon" style="color: var(--danger);">🚪</span>
+                        <span style="color: var(--danger);">Logout</span>
                     </a>
                 </li>
             </ul>
@@ -1258,8 +1322,98 @@
 
     <script src="js/mqtt.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
     
+    <script src="js/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        
+    // ==========================================
+// FIREBASE INITIALIZATION & AUTHENTICATION
+// ==========================================
+const firebaseConfig = {
+  apiKey: "AIzaSyA7o9WdOCZE34-jBbS22ZnJzWQGftiWnAk",
+  authDomain: "dtenergy.firebaseapp.com",
+  projectId: "dtenergy",
+  storageBucket: "dtenergy.firebasestorage.app",
+  messagingSenderId: "1074382603394",
+  appId: "1:1074382603394:web:07c2691515f0e36705209b"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let isLoginMode = true;
+let currentUser = null;
+
+function toggleAuthMode() {
+    isLoginMode = !isLoginMode;
+    document.getElementById("auth-title").innerText = isLoginMode ? "Login to EnergyPro" : "Create Account";
+    document.getElementById("auth-submit-btn").innerText = isLoginMode ? "Login" : "Sign Up";
+    document.getElementById("auth-error").style.display = "none";
+    document.querySelector(".auth-toggle").innerText = isLoginMode ? "Need an account? Sign Up" : "Already have an account? Login";
+}
+
+async function handleAuth() {
+    const email = document.getElementById("auth-email").value.trim();
+    const password = document.getElementById("auth-password").value.trim();
+    const errorDiv = document.getElementById("auth-error");
+    const btn = document.getElementById("auth-submit-btn");
+
+    if(!email || !password) {
+        errorDiv.innerText = "Please fill in all fields.";
+        errorDiv.style.display = "block";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerText = "Processing...";
+
+    try {
+        if(isLoginMode) {
+            await auth.signInWithEmailAndPassword(email, password);
+        } else {
+            await auth.createUserWithEmailAndPassword(email, password);
+        }
+    } catch(error) {
+        errorDiv.innerText = error.message;
+        errorDiv.style.display = "block";
+        btn.disabled = false;
+        btn.innerText = isLoginMode ? "Login" : "Sign Up";
+    }
+}
+
+function logoutUser() {
+    auth.signOut();
+}
+
+// Global Auth State Listener
+auth.onAuthStateChanged((user) => {
+    if (user) {
+        // User is logged in!
+        currentUser = user;
+        document.getElementById("auth-overlay").style.display = "none";
+        console.log("Logged in as:", user.email);
+        
+        // TODO (Phase 3): Load Devices and Sessions from Firestore here!
+        
+    } else {
+        // User is logged out!
+        currentUser = null;
+        document.getElementById("auth-overlay").style.display = "flex";
+        
+        // Reset the login button state just in case
+        const btn = document.getElementById("auth-submit-btn");
+        btn.disabled = false;
+        btn.innerText = isLoginMode ? "Login" : "Sign Up";
+    }
+});
+// ==========================================
+        
        const MQTT_BROKER = 'wss://cce0028b983e49eab96dcbc4edd56661.s1.eu.hivemq.cloud:8884/mqtt';
        const MQTT_USER   = 'smartmeter';
        const MQTT_PASS   = 'Emmanuel1234$';
