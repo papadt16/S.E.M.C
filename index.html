@@ -1163,7 +1163,7 @@
 
           <div class="form-group">
               <label class="form-label">Display Name</label>
-              <input type="text" id="newDeviceName" class="form-input" placeholder="e.g. FRIDGE">
+              <input type="text" id="newDeviceName" class="form-input" placeholder="e.g. LIGHT">
           </div>
 
               <div class="form-group">
@@ -1426,10 +1426,9 @@ auth.onAuthStateChanged((user) => {
     }
 });
 // ==========================================
-
-// ==========================================
 // CLOUD SYNC ENGINE (FIRESTORE)
 // ==========================================
+let isCloudReady = false; // The magic lock to prevent accidental wipes
 
 // 1. PULL FROM CLOUD (Runs on Login)
 async function pullDataFromCloud() {
@@ -1451,8 +1450,6 @@ async function pullDataFromCloud() {
                 localStorage.setItem("energy_history", JSON.stringify(cloudData.history));
             }
 
-            console.log("✅ Cloud Sync Complete!");
-
             // Refresh the UI so the new cloud data appears instantly
             if (typeof renderDevicesTable === "function") renderDevicesTable();
             if (typeof loadControlLocations === "function") loadControlLocations();
@@ -1461,6 +1458,9 @@ async function pullDataFromCloud() {
             if (typeof renderTodaysSessions === "function") renderTodaysSessions();
             if (typeof loadChartDevices === "function") loadChartDevices();
         }
+        
+        isCloudReady = true; // UNLOCK pushing to the cloud!
+        console.log("✅ Cloud Sync Complete & Unlocked!");
     } catch (error) {
         console.error("Error pulling from cloud:", error);
     }
@@ -1468,7 +1468,9 @@ async function pullDataFromCloud() {
 
 // 2. PUSH TO CLOUD (Runs whenever you add/delete something)
 async function pushDataToCloud() {
-    if (!currentUser) return;
+    // If the cloud hasn't finished pulling yet, STOP. Do not overwrite!
+    if (!currentUser || !isCloudReady) return; 
+    
     try {
         // Grab whatever is currently in the local memory
         const currentDevices = JSON.parse(localStorage.getItem("energy_devices") || "[]");
@@ -2463,8 +2465,9 @@ function loadSessionsLocal() {
 }
 
 function saveSessionsLocal() {
+    // Replaced the broken STORAGE_KEY with the correct string
     localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore));
-    pushDataToCloud(); // Auto-sync to Firebase
+    pushDataToCloud(); 
 }
 
 function daysToText(days){
