@@ -758,12 +758,12 @@
    <div id="auth-overlay">
     <div id="auth-loading">
         <div style="font-size: 45px; margin-bottom: 10px; animation: pulse 1.5s infinite;">⚡</div>
-        <h2 style="color: var(--primary);">Loading EnergyPro...</h2>
+        <h2 style="color: var(--primary);">Loading DTEnegy...</h2>
     </div>
 
     <div class="auth-card" id="auth-form-container" style="display: none;">
         <div style="font-size: 45px; margin-bottom: 10px;">⚡</div>
-        <h2 id="auth-title">Login to EnergyPro</h2>
+        <h2 id="auth-title">Login to DTEnergy</h2>
         <div id="auth-error" style="color: var(--danger); font-size: 13px; margin-bottom: 15px; display: none;"></div>
         
         <div class="form-group" style="text-align: left;">
@@ -785,7 +785,7 @@
   <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle menu">
     ☰
   </button>
-  <div class="mobile-title">EnergyPro</div>
+  <div class="mobile-title">DTEnergy</div>
 </div>
 
 <!-- Overlay (click to close sidebar) -->
@@ -796,7 +796,7 @@
         <div class="sidebar">
             <div class="brand">
                 <div class="brand-icon">⚡</div>
-                <div class="brand-name">EnergyPro</div>
+                <div class="brand-name">DTEnergy</div>
             </div>
             <ul class="nav-menu">
                 <li class="nav-item">
@@ -1365,7 +1365,7 @@ let currentUser = null;
 
 function toggleAuthMode() {
     isLoginMode = !isLoginMode;
-    document.getElementById("auth-title").innerText = isLoginMode ? "Login to EnergyPro" : "Create Account";
+    document.getElementById("auth-title").innerText = isLoginMode ? "Login to DTEnergy" : "Create Account";
     document.getElementById("auth-submit-btn").innerText = isLoginMode ? "Login" : "Sign Up";
     document.getElementById("auth-error").style.display = "none";
     document.querySelector(".auth-toggle").innerText = isLoginMode ? "Need an account? Sign Up" : "Already have an account? Login";
