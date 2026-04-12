@@ -702,6 +702,20 @@
     font-size: 20px;
   }
 }
+        /* Mobile Layout Fixes */
+@media (max-width: 768px) {
+    body {
+        height: auto !important; 
+        min-height: 100vh;
+        align-items: flex-start !important; /* This stops it from pushing content off the top */
+        padding-top: 15px; /* Gives a little breathing room at the top */
+    }
+    
+    .main-content {
+        height: auto !important;
+        margin-top: 0 !important;
+    }
+}
     </style>
 </head>
 <body>
