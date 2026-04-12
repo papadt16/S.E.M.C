@@ -1999,6 +1999,7 @@ function addDevice() {
   locationInput.value = "";
 
   renderDevicesTable();
+  pushDataToCloud();
   renderDeviceSelect();
 
   showAlert("Device added successfully", "success", "devices-alert");
@@ -2022,7 +2023,6 @@ function renameDevice(deviceId) {
   saveDevices(devices);
 
   renderDevicesTable();
-  pushDataToCloud();
   renderDeviceSelect();
 
   showAlert("Device renamed successfully", "success", "devices-alert");
