@@ -1406,30 +1406,82 @@ function logoutUser() {
 
 // Global Auth State Listener
 // Global Auth State Listener
+// Global Auth State Listener
 auth.onAuthStateChanged((user) => {
-    // 1. Hide the loading spinner immediately
     document.getElementById("auth-loading").style.display = "none";
 
     if (user) {
         // User is logged in!
         currentUser = user;
         document.getElementById("auth-overlay").style.display = "none";
-        console.log("Logged in as:", user.email);
         
-        // TODO (Phase 3): Load Devices and Sessions from Firestore here!
+        // 👉 PULL DATA FROM CLOUD 
+        pullDataFromCloud();
         
     } else {
         // User is logged out!
         currentUser = null;
         document.getElementById("auth-overlay").style.display = "flex";
-        document.getElementById("auth-form-container").style.display = "block"; // Show the login form
-        
-        // Reset the login button state just in case
-        const btn = document.getElementById("auth-submit-btn");
-        btn.disabled = false;
-        btn.innerText = isLoginMode ? "Login" : "Sign Up";
+        document.getElementById("auth-form-container").style.display = "block";
     }
 });
+// ==========================================
+
+        // ==========================================
+// CLOUD SYNC ENGINE (FIRESTORE)
+// ==========================================
+
+// 1. PULL FROM CLOUD (Runs on Login)
+async function pullDataFromCloud() {
+    if (!currentUser) return;
+    try {
+        const doc = await db.collection("users").doc(currentUser.uid).get();
+        if (doc.exists) {
+            const cloudData = doc.data();
+
+            // Overwrite local memory with cloud data
+            if (cloudData.devices) {
+                localStorage.setItem("energy_devices", JSON.stringify(cloudData.devices));
+            }
+            if (cloudData.sessions) {
+                sessionsStore = cloudData.sessions;
+                localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore));
+            }
+
+            console.log("✅ Cloud Sync Complete!");
+
+            // Refresh the UI so the new cloud data appears instantly
+            if (typeof renderDevicesTable === "function") renderDevicesTable();
+            if (typeof loadControlLocations === "function") loadControlLocations();
+            if (typeof renderDeviceSelect === "function") renderDeviceSelect();
+            if (typeof renderSessionsTable === "function") renderSessionsTable();
+            if (typeof loadChartDevices === "function") loadChartDevices();
+        }
+    } catch (error) {
+        console.error("Error pulling from cloud:", error);
+    }
+}
+
+// 2. PUSH TO CLOUD (Runs whenever you add/delete something)
+async function pushDataToCloud() {
+    if (!currentUser) return;
+    try {
+        // Grab whatever is currently in the local memory
+        const currentDevices = JSON.parse(localStorage.getItem("energy_devices") || "[]");
+        const currentSessions = sessionsStore || [];
+
+        // Send it to Google's servers
+        await db.collection("users").doc(currentUser.uid).set({
+            devices: currentDevices,
+            sessions: currentSessions,
+            lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log("☁️ Data successfully backed up to cloud!");
+    } catch (error) {
+        console.error("Error pushing to cloud:", error);
+    }
+}
 // ==========================================
         
        const MQTT_BROKER = 'wss://cce0028b983e49eab96dcbc4edd56661.s1.eu.hivemq.cloud:8884/mqtt';
@@ -1947,6 +1999,7 @@ function addDevice() {
   locationInput.value = "";
 
   renderDevicesTable();
+  pushDataToCloud();
   renderDeviceSelect();
 
   showAlert("Device added successfully", "success", "devices-alert");
@@ -1970,6 +2023,7 @@ function renameDevice(deviceId) {
   saveDevices(devices);
 
   renderDevicesTable();
+  pushDataToCloud();
   renderDeviceSelect();
 
   showAlert("Device renamed successfully", "success", "devices-alert");
@@ -1988,6 +2042,7 @@ function removeDevice(deviceId) {
   }
 
   renderDevicesTable();
+  pushDataToCloud();
   renderDeviceSelect();
 
   if (selectedDeviceId) {
@@ -2401,7 +2456,8 @@ function loadSessionsLocal() {
 }
 
 function saveSessionsLocal() {
-  localStorage.setItem(sessionsKey(selectedDeviceId), JSON.stringify(sessionsStore));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionsStore));
+    pushDataToCloud(); 
 }
 
 function daysToText(days){
