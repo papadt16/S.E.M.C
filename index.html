@@ -1427,7 +1427,7 @@ auth.onAuthStateChanged((user) => {
 });
 // ==========================================
 
-        // ==========================================
+// ==========================================
 // CLOUD SYNC ENGINE (FIRESTORE)
 // ==========================================
 
@@ -1447,6 +1447,9 @@ async function pullDataFromCloud() {
                 sessionsStore = cloudData.sessions;
                 localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore));
             }
+            if (cloudData.history) {
+                localStorage.setItem("energy_history", JSON.stringify(cloudData.history));
+            }
 
             console.log("✅ Cloud Sync Complete!");
 
@@ -1455,6 +1458,7 @@ async function pullDataFromCloud() {
             if (typeof loadControlLocations === "function") loadControlLocations();
             if (typeof renderDeviceSelect === "function") renderDeviceSelect();
             if (typeof renderSessionsTable === "function") renderSessionsTable();
+            if (typeof renderTodaysSessions === "function") renderTodaysSessions();
             if (typeof loadChartDevices === "function") loadChartDevices();
         }
     } catch (error) {
@@ -1469,11 +1473,13 @@ async function pushDataToCloud() {
         // Grab whatever is currently in the local memory
         const currentDevices = JSON.parse(localStorage.getItem("energy_devices") || "[]");
         const currentSessions = sessionsStore || [];
+        const currentHistory = JSON.parse(localStorage.getItem("energy_history") || "{}");
 
         // Send it to Google's servers
         await db.collection("users").doc(currentUser.uid).set({
             devices: currentDevices,
             sessions: currentSessions,
+            history: currentHistory,
             lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
@@ -1489,7 +1495,7 @@ async function pushDataToCloud() {
        const MQTT_PASS   = 'Emmanuel1234$';
        const WEEKDAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
        const SELECTED_DEVICE_KEY = "selectedDeviceId";
-       const DEVICES_KEY = "energypro_devices";
+       const DEVICES_KEY = "energy_devices";
        const ENERGY_HISTORY_KEY = "energy_history";
         
        let selectedDeviceId = "SOCKET001";
@@ -1636,9 +1642,10 @@ async function pushDataToCloud() {
 }
 
 function saveDevices(devices) {
-  localStorage.setItem(DEVICES_KEY, JSON.stringify(devices));
+    localStorage.setItem(DEVICES_KEY, JSON.stringify(devices));
+    pushDataToCloud(); // Auto-sync to Firebase when a device is added/deleted
 }
-
+        
 function renderDeviceSelect() {
   const select = document.getElementById("dashboardLocationSelect");
   if (!select) return;
@@ -1679,6 +1686,7 @@ function storeDailyEnergy(deviceId, energyValue) {
   history[deviceId][today] = energyValue;
 
   localStorage.setItem(ENERGY_HISTORY_KEY, JSON.stringify(history));
+  pushDataToCloud(); // <-- ADD THIS LINE
 }
 
  function getWeeklyData(deviceId) {
@@ -2447,7 +2455,7 @@ function sessionsKey(deviceId){ return `sessions_${deviceId}`; }
 
 function loadSessionsLocal() {
   try {
-    const raw = localStorage.getItem(sessionsKey(selectedDeviceId));
+    const raw = localStorage.getItem("energy_sessions");
     sessionsStore = raw ? JSON.parse(raw) : [];
   } catch {
     sessionsStore = [];
@@ -2455,8 +2463,8 @@ function loadSessionsLocal() {
 }
 
 function saveSessionsLocal() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionsStore));
-    pushDataToCloud(); 
+    localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore));
+    pushDataToCloud(); // Auto-sync to Firebase
 }
 
 function daysToText(days){
