@@ -1222,7 +1222,6 @@
                         </div>
                     </div>
 
-            
                     <div class="card settings-section">
                         <div class="settings-header">
                             <span class="settings-icon">💰</span>
@@ -1248,9 +1247,26 @@
 
                     <button type="button" class="btn btn-primary" onclick="setThresholds()">Save All Settings</button>
                 </form>
-
+                
+              <div class="card settings-section">
+                 <div class="settings-header">
+                     <span class="settings-icon">🔑</span>
+                     <h3 class="settings-title">Screen Keypad PIN</h3>
+                 </div>
+                 <div class="settings-grid">
+                 <div class="form-group">
+                     <label class="form-label">New 4-8 Digit PIN</label>
+                     <div class="input-group">
+                     <input type="number" id="newKeypadPin" class="form-input" placeholder="e.g. 1234">
+                 </div>
+                 <button type="button" class="btn btn-warning" onclick="resetKeypadPin()" style="margin-top: 10px;">Update PIN</button>
+                 <div id="pin-alert" style="display:none; margin-top: 10px;" class="alert"></div>
+               </div>
+             </div>
+           </div>
+                
                  <!-- Factory Reset Button -->
-                <div class="card settings-section">
+               <div class="card settings-section">
                     <div class="settings-header">
                         <span class="settings-icon" style="color: var(--danger);">⚠️</span>
                         <h3 class="settings-title" style="color: var(--danger);">Factory Reset</h3>
@@ -1258,9 +1274,8 @@
                     <p style="margin-top: 10px; margin-bottom: 20px;">Reset all settings to default and clear energy data. This action is irreversible.</p>
                     <button type="button" class="btn btn-danger" onclick="factoryReset()">Factory Reset</button>
                     <div id="factory-reset-alert" style="display:none;" class="alert"></div>
-                </div>
-
-            </div>
+                   </div>
+               </div>
 
             <!-- Reports Section (placeholder) -->
            <div id="reports-section" class="page-section">
@@ -1708,6 +1723,25 @@ function storeDailyEnergy(deviceId, energyValue) {
 
   return result;
 }
+        
+    function resetKeypadPin() {
+    const newPin = document.getElementById("newKeypadPin").value;
+    if(newPin.length < 4 || newPin.length > 8) {
+        showAlert('PIN must be 4 to 8 digits.', 'danger', 'pin-alert');
+        return;
+    }
+    
+    fetch('/resetPin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPin: newPin })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(data.success) showAlert('Keypad PIN updated successfully!', 'success', 'pin-alert');
+        else showAlert('Failed to update PIN.', 'danger', 'pin-alert');
+    });
+    }
 
 // --- REPORTS & CHART LOGIC ---
 let weeklyChart;
