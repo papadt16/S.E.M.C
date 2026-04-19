@@ -43,23 +43,26 @@
             overflow-x: hidden;
         }
 
-        .dashboard-container {
-            display: grid;
-            grid-template-columns: 240px 1fr;
-            min-height: 100vh;
-        }
+   .dashboard-container {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 100vh;
+    align-items: stretch;
+}
 
-        /* Sidebar */
-        .sidebar {
-            background-color: var(--primary);
-            color: white;
-            padding-top: 20px;
-            position: relative;
-            height: 100vh;
-            width: 240px;
-            z-index: 100;
-            box-shadow: var(--box-shadow);
-        }
+.sidebar {
+    background-color: var(--primary);
+    color: white;
+    padding-top: 20px;
+    position: relative;
+    width: 240px;
+    min-height: 100%;
+    height: auto;
+    align-self: stretch;
+    z-index: 100;
+    box-shadow: var(--box-shadow);
+}
+
 
         .brand {
             display: flex;
@@ -1257,7 +1260,8 @@
                  <div class="form-group">
                      <label class="form-label">New 4-8 Digit PIN</label>
                      <div class="input-group">
-                     <input type="number" id="newKeypadPin" class="form-input" placeholder="e.g. 1234">
+                    <input type="text" id="newKeypadPin" class="form-input" placeholder="e.g. 1234" inputmode="numeric" minlength="4" maxlength="8" pattern="[1-4]{4,8}"
+                    oninput="this.value = this.value.replace(/[^1-4]/g, '').slice(0, 8);"/>
                  </div>
                  <button type="button" class="btn btn-warning" onclick="resetKeypadPin()" style="margin-top: 10px;">Update PIN</button>
                  <div id="pin-alert" style="display:none; margin-top: 10px;" class="alert"></div>
@@ -1724,24 +1728,34 @@ function storeDailyEnergy(deviceId, energyValue) {
   return result;
 }
         
-    function resetKeypadPin() {
-    const newPin = document.getElementById("newKeypadPin").value;
-    if(newPin.length < 4 || newPin.length > 8) {
-        showAlert('PIN must be 4 to 8 digits.', 'danger', 'pin-alert');
+  function resetKeypadPin() {
+    const pinInput = document.getElementById("newKeypadPin");
+    const newPin = pinInput.value.trim();
+
+    if (!/^[1-4]{4,8}$/.test(newPin)) {
+        showAlert('PIN must be 4 to 8 digits and use only 1, 2, 3, or 4.', 'danger', 'pin-alert');
         return;
     }
-    
+
     fetch('/resetPin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPin: newPin })
+        body: JSON.stringify({ newPin })
     })
     .then(r => r.json())
     .then(data => {
-        if(data.success) showAlert('Keypad PIN updated successfully!', 'success', 'pin-alert');
-        else showAlert('Failed to update PIN.', 'danger', 'pin-alert');
+        if (data.success) {
+            showAlert('Keypad PIN updated successfully!', 'success', 'pin-alert');
+            pinInput.value = '';
+        } else {
+            showAlert('Failed to update PIN.', 'danger', 'pin-alert');
+        }
+    })
+    .catch(() => {
+        showAlert('Unable to update PIN right now.', 'danger', 'pin-alert');
     });
-    }
+}
+
 
 // --- REPORTS & CHART LOGIC ---
 let weeklyChart;
