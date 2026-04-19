@@ -1260,7 +1260,7 @@
                  <div class="form-group">
                      <label class="form-label">New 4-8 Digit PIN</label>
                      <div class="input-group">
-                    <input type="text" id="newKeypadPin" class="form-input" placeholder="e.g. 1234" inputmode="numeric" minlength="4" maxlength="8" pattern="[1-4]{4,8}"
+                    <input type="text" id="newKeypadPin" class="form-input" placeholder="e.g. 1234 (only characters between 1-4 allowed" inputmode="numeric" minlength="4" maxlength="8" pattern="[1-4]{4,8}"
                     oninput="this.value = this.value.replace(/[^1-4]/g, '').slice(0, 8);"/>
                  </div>
                  <button type="button" class="btn btn-warning" onclick="resetKeypadPin()" style="margin-top: 10px;">Update PIN</button>
