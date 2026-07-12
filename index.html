@@ -1824,9 +1824,6 @@ function implementAIRoutine() {
     }, 1200);
 }
 
-// --- RESTORED MISSING UTILITIES ---
-let currentSubs = []; // Required for MQTT wildcard subscriptions
-
 function loadSessionsLocal() {
     try {
         const saved = localStorage.getItem("energy_sessions");
@@ -1905,7 +1902,206 @@ function openSessionModal() {
     document.getElementById("sessionModal").style.display = "flex";
 }
 // ----------------------------------
-        
+// ==========================================
+// THE MISSING ENGINE BLOCK (RESTORED LOGIC)
+// ==========================================
+
+let currentSubs = []; // Moved up here to fix the MQTT Race Condition
+let currentChartOffset = 0; 
+let chartInstance = null;
+
+// 1. Fixed Session Time Validator
+function validateHHMM(str) {
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(str);
+}
+
+// 2. Restored Reports & Chart.js Logic
+function loadChartDevices() {
+    const select = document.getElementById("chartDeviceSelect");
+    if (!select) return;
+    select.innerHTML = '<option value="ALL">All Devices (Combined)</option>';
+    loadDevices().forEach(d => {
+        select.appendChild(new Option(d.displayName, d.deviceId));
+    });
+    select.addEventListener("change", () => renderWeeklyChart());
+    renderWeeklyChart();
+}
+
+function changeWeek(direction) {
+    currentChartOffset += direction;
+    if (currentChartOffset < 0) currentChartOffset = 0;
+    document.getElementById("nextWeekBtn").disabled = (currentChartOffset === 0);
+    renderWeeklyChart();
+}
+
+function renderWeeklyChart() {
+    const canvas = document.getElementById("weeklyChart");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const devId = document.getElementById("chartDeviceSelect").value;
+    const history = JSON.parse(localStorage.getItem("energy_history") || "{}");
+
+    const today = new Date();
+    today.setDate(today.getDate() - (currentChartOffset * 7));
+    const labels = [];
+    const energyData = [];
+    const powerData = [];
+
+    // Map the last 7 days ending at the current offset
+    for(let i=6; i>=0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split("T")[0];
+        labels.push(d.toLocaleDateString('en-US', {weekday:'short', month:'numeric', day:'numeric'}));
+
+        let eSum = 0, pSum = 0, count = 0;
+
+        if (devId === "ALL") {
+            for(const id in history) {
+                if(history[id][dateStr]) {
+                    eSum += history[id][dateStr].energy || 0;
+                    pSum += history[id][dateStr].power || 0;
+                    count++;
+                }
+            }
+        } else {
+            if(history[devId] && history[devId][dateStr]) {
+                eSum += history[devId][dateStr].energy || 0;
+                pSum += history[devId][dateStr].power || 0;
+                count++;
+            }
+        }
+        energyData.push(eSum);
+        powerData.push(count > 0 ? (pSum/count) : 0);
+    }
+
+    document.getElementById("currentChartDateRange").innerText = `${labels[0]} - ${labels[6]}`;
+
+    if(chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                { label: 'Energy (kWh)', data: energyData, backgroundColor: 'rgba(45, 198, 83, 0.6)', borderColor: '#2dc653', borderWidth: 1, yAxisID: 'y' },
+                { label: 'Avg Power (W)', data: powerData, type: 'line', borderColor: '#3e92cc', backgroundColor: '#3e92cc', tension: 0.3, yAxisID: 'y1' }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                y: { type: 'linear', display: true, position: 'left', title: {display: true, text: 'Energy (kWh)'} },
+                y1: { type: 'linear', display: true, position: 'right', title: {display: true, text: 'Power (W)'}, grid: {drawOnChartArea: false} }
+            }
+        }
+    });
+}
+
+// 3. Restored Device Management Logic
+function addDevice() {
+    const id = document.getElementById("newDeviceId").value.trim();
+    const name = document.getElementById("newDeviceName").value.trim();
+    const loc = document.getElementById("newDeviceLocation").value.trim() || "Main Room";
+
+    if(!id || !name) { showAlert("ID and Name are required", "danger", "devices-alert"); return; }
+    const devices = loadDevices();
+    if(devices.find(d => d.deviceId === id)) { showAlert("Device ID already exists", "danger", "devices-alert"); return; }
+
+    devices.push({ deviceId: id, displayName: name, location: loc });
+    saveDevices(devices);
+    showAlert("Device added successfully!", "success", "devices-alert");
+
+    document.getElementById("newDeviceId").value = "";
+    document.getElementById("newDeviceName").value = "";
+    renderDevicesTable();
+    renderDeviceSelect();
+    if (typeof loadControlLocations === "function") loadControlLocations();
+    if (typeof loadSessionLocations === "function") loadSessionLocations();
+}
+
+function renderDevicesTable() {
+    const container = document.getElementById("devicesListContainer");
+    if(!container) return;
+    const devices = loadDevices();
+    if(!devices.length) { container.innerHTML = "<p>No devices saved.</p>"; return; }
+
+    let html = '<table style="width:100%; border-collapse:collapse;"><thead><tr style="text-align:left; border-bottom:1px solid #dee2e6;"><th>ID</th><th>Name</th><th>Location</th><th>Actions</th></tr></thead><tbody>';
+    devices.forEach(d => {
+        html += `<tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:10px;">${escapeHtml(d.deviceId)}</td>
+            <td style="padding:10px;">${escapeHtml(d.displayName)}</td>
+            <td style="padding:10px;">${escapeHtml(d.location || "Unassigned")}</td>
+            <td style="padding:10px;"><button class="btn btn-danger" style="padding:4px 8px; font-size:12px;" onclick="deleteDevice('${d.deviceId}')">Remove</button></td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function deleteDevice(id) {
+    if(!confirm("Remove this device?")) return;
+    let devices = loadDevices();
+    devices = devices.filter(d => d.deviceId !== id);
+    saveDevices(devices);
+    renderDevicesTable();
+    renderDeviceSelect();
+    loadControlLocations();
+    loadSessionLocations();
+}
+
+// 4. Restored Billing & Recharge Logic
+function rechargeAccount() {
+    const amount = Number(document.getElementById("recharge-amount").value);
+    if(!amount || amount <= 0) { showAlert("Enter a valid amount", "danger", "recharge-alert"); return; }
+    if(!mqttClient || !mqttClient.connected) { showAlert("MQTT disconnected.", "danger", "recharge-alert"); return; }
+    const devices = loadDevices();
+    if(!devices.length) { showAlert("No devices to recharge.", "danger", "recharge-alert"); return; }
+
+    devices.forEach(d => {
+        mqttClient.publish(`smart_socket/${d.deviceId}/balance/add`, JSON.stringify({amount: amount}));
+    });
+    showAlert(`₦${amount} Recharge command sent to devices!`, "success", "recharge-alert");
+    document.getElementById("recharge-amount").value = "";
+}
+
+function clearBalance() {
+    if(!confirm("Are you sure you want to clear the entire balance?")) return;
+    loadDevices().forEach(d => {
+        mqttClient.publish(`smart_socket/${d.deviceId}/balance/set`, JSON.stringify({balance: 0.0}));
+    });
+    showAlert("Balance cleared command sent.", "warning", "recharge-alert");
+}
+
+// 5. Restored Settings & System Logic
+function setThresholds() {
+    const ov = Number(document.getElementById("overVoltage").value);
+    const oc = Number(document.getElementById("overCurrent").value);
+    const minB = Number(document.getElementById("minBalance").value);
+    const cost = Number(document.getElementById("costPerKWh").value);
+
+    loadDevices().forEach(d => {
+        mqttClient.publish(`smart_socket/${d.deviceId}/thresholds/set`, JSON.stringify({
+            overVoltage: ov, overCurrent: oc, minBalance: minB, costPerKWh: cost
+        }));
+    });
+    showAlert("Thresholds updated and pushed to devices!", "success", "threshold-alert");
+}
+
+function resetKeypadPin() {
+    // Stores PIN locally since the 1x4 physical keypad was replaced by the single push button
+    const pin = document.getElementById("newKeypadPin").value;
+    if(pin.length < 4) { showAlert("PIN must be at least 4 digits", "danger", "pin-alert"); return; }
+    localStorage.setItem("dt_keypad_pin", pin);
+    showAlert("PIN securely updated in local storage!", "success", "pin-alert");
+}
+
+function factoryReset() {
+    if(!confirm("WARNING: This will wipe all local data, sessions, and history. Proceed?")) return;
+    localStorage.clear();
+    if(typeof auth !== 'undefined' && auth) auth.signOut();
+    window.location.reload();
+}
+// ----------------------------------       
 initMQTT();
 loadSessionsLocal();
 renderSessionsTable();
