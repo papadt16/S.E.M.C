@@ -1410,17 +1410,6 @@ if (saved) {
 }
 
 
-       // If there are no saved devices yet, create a default one
-const existingDevices = loadDevices();
-if (!existingDevices.length) {
-  saveDevices([
-    { deviceId: "SOCKET001", displayName: "SOCKET001" }
-  ]);
-}
-
-renderDeviceSelect();
-renderDevicesTable();
-
 if (!selectedDeviceId) {
   const devices = loadDevices();
   if (devices.length) {
