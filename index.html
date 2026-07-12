@@ -1691,34 +1691,52 @@ function closeInsightsModal() {
     document.getElementById("insightsModal").style.display = "none";
 }
 
-// Add/Replace the AI functions below:
-const GEMINI_API_KEY = "AQ.Ab8RN6K7M7DEYIQ4ic14CzqwePP8UHLexrrdRC1aSzWqD6coHQ";  // Get from Google AI Studio
+// SECURE METHOD: Fetches key from local browser storage to prevent GitHub Secret exposure
+function getGeminiKey() {
+    let key = localStorage.getItem("gemini_api_key");
+    if (!key) {
+        key = prompt("Admin Setup: Please enter your Google Gemini API Key to enable AI Insights. (This is only stored locally on your device).");
+        if (key) {
+            localStorage.setItem("gemini_api_key", key.trim());
+        }
+    }
+    return key;
+}
 
 async function generateSmartInsights() {
-    const container = document.getElementById("insightsContainer");
+    // FIXED: Changed ID to match your HTML
+    const container = document.getElementById("ai-insights-container");
     if(!container) return;
+    
+    // FIXED: Securely get API key
+    const GEMINI_API_KEY = getGeminiKey();
+    if (!GEMINI_API_KEY) {
+        container.innerHTML = `<div style="color: red; text-align: center; padding: 10px;">AI Insights requires an API Key to function. Refresh to try again.</div>`;
+        return;
+    }
 
     container.innerHTML = `
         <div style="text-align:center; padding:20px; color:var(--secondary);">
             <span style="font-size:24px; display:block; margin-bottom:10px;">🤖</span> 
-            AI is analyzing real-time data from your PZEM sensors...
+            AI is analyzing real-time data from your 5 PZEM sensors...
         </div>`;
 
-    // Gather live data directly from the dashboard UI (which reads your 5 PZEMs)
+    // Gather live data
     const currentPower = document.getElementById('power')?.textContent || "0";
     const currentVoltage = document.getElementById('voltage')?.textContent || "0";
     const currentBalance = document.getElementById('balance')?.textContent || "0";
 
-    // The AI Prompt
+    // FIXED: Updated AI Prompt to handle 5 Relays/PZEMs
     const aiPrompt = `
       You are an expert Smart Energy AI Assistant for a home in Nigeria. 
-      The user is viewing a device drawing ${currentPower} with a grid voltage of ${currentVoltage}. 
+      The user's entire system is currently drawing ${currentPower} with a grid voltage of ${currentVoltage}. 
       Their prepaid balance is ${currentBalance}.
       
-      Provide a brief, 2-sentence insight on how to optimize this specific device to save money.
-      Then, generate a scheduled routine to automate this device to save power.
+      The system controls 5 specific appliances via Relays (Index 0 through 4).
+      Provide a brief, 2-sentence insight on how to optimize overall usage to save money based on these readings.
+      Then, generate a scheduled routine to automate ONE heavy appliance to save power. Pick a logical relayIndex (0 to 4).
       You MUST end your response with a JSON block in this exact format (do not add markdown around it):
-      {"startTime": "23:00", "duration": 60, "days": [1,2,3,4,5,6,7], "relayIndex": 0}
+      {"startTime": "23:00", "duration": 60, "days": [1,2,3,4,5,6,7], "relayIndex": 2}
     `;
 
     try {
@@ -1728,10 +1746,15 @@ async function generateSmartInsights() {
             body: JSON.stringify({ contents: [{ parts: [{ text: aiPrompt }] }] })
         });
 
+        // Handle bad API key errors gracefully
+        if (response.status === 400 || response.status === 403) {
+            localStorage.removeItem("gemini_api_key"); 
+            throw new Error("Invalid API Key");
+        }
+
         const data = await response.json();
         const aiText = data.candidates[0].content.parts[0].text;
 
-        // Extract the JSON payload
         const jsonMatch = aiText.match(/\{[\s\S]*\}/);
         let scheduleJson = null;
         let cleanText = aiText;
@@ -1741,7 +1764,6 @@ async function generateSmartInsights() {
             cleanText = aiText.replace(scheduleJson, '').trim();
         }
 
-        // Render the UI
         let html = `
             <div style="background: #e9f5ff; padding: 15px; border-radius: 8px; border: 1px solid #3e92cc; margin-bottom: 15px;">
                 <strong style="color: var(--primary);">🤖 Deep-Dive Insight:</strong><br>
@@ -1756,7 +1778,7 @@ async function generateSmartInsights() {
                 <div style="text-align: center; margin-top: 15px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
                     <p style="font-size:14px; color:var(--gray-800); margin-bottom:10px;">
                         <strong>Suggested Automation:</strong><br>
-                        Turn ON at ${window.aiSuggestedSchedule.startTime} for ${window.aiSuggestedSchedule.duration} mins.
+                        Turn ON Relay ${window.aiSuggestedSchedule.relayIndex + 1} at ${window.aiSuggestedSchedule.startTime} for ${window.aiSuggestedSchedule.duration} mins.
                     </p>
                     <button class="btn btn-success" onclick="implementAIRoutine()" style="width: 100%; font-weight:bold;">
                         ⚡ Implement Routine Automatically
