@@ -1366,8 +1366,8 @@ mqttClient.on("message", (topic, payload) => {
   if (topic.endsWith("/telemetry")) {
     window.liveDeviceData[devId] = data; // Save the raw data
 
-    if (data.energy !== undefined) {
-        storeDailyEnergy(devId, Number(data.energy)); // Store history
+     if (data.energy !== undefined) {
+        storeDailyMetrics(devId, data); // Uses the new multi-metric tracker
     }
 
     if (document.getElementById('dashboard-section').classList.contains('active')) {
@@ -1834,6 +1834,88 @@ function implementAIRoutine() {
         alertDiv.innerText = '✅ AI Routine synced to ESP32!';
     }, 1200);
 }
+
+// --- RESTORED MISSING UTILITIES ---
+let currentSubs = []; // Required for MQTT wildcard subscriptions
+
+function loadSessionsLocal() {
+    try {
+        const saved = localStorage.getItem("energy_sessions");
+        if (saved) sessionsStore = JSON.parse(saved);
+    } catch(e) { sessionsStore = []; }
+}
+
+function saveSessionsLocal() {
+    localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore));
+    pushDataToCloud();
+}
+
+function renderSessionsTable() {
+    const tbody = document.getElementById("sessionsTableBody");
+    if (!tbody) return;
+    if (!sessionsStore || sessionsStore.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='5' style='padding:15px; text-align:center; color:var(--gray-500);'>No saved sessions.</td></tr>";
+        return;
+    }
+    let html = "";
+    sessionsStore.forEach(s => {
+        const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        const daysStr = (s.days || []).map(d => dayNames[d-1]).join(", ");
+        html += `<tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:10px;">${escapeHtml(s.deviceName || s.deviceId)}</td>
+            <td style="padding:10px; font-weight:bold;">${s.startTime}</td>
+            <td style="padding:10px;">${s.duration} min</td>
+            <td style="padding:10px; font-size:12px;">${daysStr}</td>
+            <td style="padding:10px;">
+                <button class="btn btn-danger" style="padding:4px 8px; font-size:12px;" onclick="deleteSession('${s.id}')">Delete</button>
+            </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+function deleteSession(id) {
+    sessionsStore = sessionsStore.filter(s => s.id !== id);
+    saveSessionsLocal();
+    renderSessionsTable();
+    renderTodaysSessions();
+    pushSessionsToESP();
+}
+
+function pushSessionsToESP() {
+    if (!mqttClient || !mqttClient.connected) {
+        showAlert("MQTT not connected.", "danger", "sessions-alert");
+        return;
+    }
+    const sessionsByDevice = {};
+    sessionsStore.forEach(s => {
+        if (!sessionsByDevice[s.deviceId]) sessionsByDevice[s.deviceId] = [];
+        sessionsByDevice[s.deviceId].push(s);
+    });
+    for (const [deviceId, sessions] of Object.entries(sessionsByDevice)) {
+        mqttClient.publish(`smart_socket/${deviceId}/sessions/set`, JSON.stringify(sessions));
+    }
+}
+
+function clearAllSessions() {
+    if(confirm("Delete all scheduled sessions?")) {
+        sessionsStore = [];
+        saveSessionsLocal();
+        renderSessionsTable();
+        renderTodaysSessions();
+        pushSessionsToESP();
+    }
+}
+
+function closeSessionModal() { document.getElementById("sessionModal").style.display = "none"; }
+
+function openSessionModal() {
+    editingSessionId = null;
+    document.getElementById("sessionModalTitle").innerText = "New Session";
+    loadSessionLocations();
+    document.getElementById("sessionModal").style.display = "flex";
+}
+// ----------------------------------
         
 initMQTT();
 loadSessionsLocal();
