@@ -5,6 +5,8 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prepaid Energy Monitor Pro</title>
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <style>
         :root {
             --primary: #0a2463;
@@ -645,8 +647,18 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
-    
+
+    <script src="js/mqtt.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js" defer></script>
     <script>
+        
+// OPTIMISTIC UI: Instantly drop the loading screen if the browser remembers a session
+if (localStorage.getItem('dt_session_active') === 'true') {
+    document.getElementById("auth-overlay").style.display = "none";
+}
 // ==========================================
 // FIREBASE INITIALIZATION & AUTHENTICATION
 // ==========================================
@@ -684,13 +696,17 @@ async function handleAuth() {
     try {
         if(isLoginMode) await auth.signInWithEmailAndPassword(email, password);
         else await auth.createUserWithEmailAndPassword(email, password);
+        localStorage.setItem('dt_session_active', 'true');
     } catch(error) {
         errorDiv.innerText = error.message; errorDiv.style.display = "block";
         btn.disabled = false; btn.innerText = isLoginMode ? "Login" : "Sign Up";
     }
 }
 
-function logoutUser() { auth.signOut(); }
+function logoutUser() { 
+    localStorage.removeItem('dt_session_active'); // Wipe the fast-load flag
+    auth.signOut(); 
+}
 
 auth.onAuthStateChanged((user) => {
     document.getElementById("auth-loading").style.display = "none";
