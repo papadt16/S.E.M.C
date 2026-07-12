@@ -893,7 +893,7 @@ function populateDashboardDeviceDropdown() {
     
     devSelect.innerHTML = `<option value="ALL">All (Collective)</option>`;
     devices.forEach(d => {
-        devSelect.appendChild(new Option(`${d.displayName} (${d.deviceId})`, d.deviceId));
+        devSelect.appendChild(new Option(`${d.displayName} (${d.deviceId})`));
     });
     devSelect.value = "ALL";
     updateLocationDashboard();
