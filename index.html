@@ -893,7 +893,8 @@ function populateDashboardDeviceDropdown() {
     
     devSelect.innerHTML = `<option value="ALL">All (Collective)</option>`;
     devices.forEach(d => {
-        devSelect.appendChild(new Option(`${d.displayName} (${d.deviceId})`));
+        // Shows ONLY the display name visually, but keeps the ID hidden for the code to use
+        devSelect.appendChild(new Option(d.displayName, d.deviceId)); 
     });
     devSelect.value = "ALL";
     updateLocationDashboard();
@@ -2104,6 +2105,13 @@ function factoryReset() {
 // ----------------------------------       
 initMQTT();
 loadSessionsLocal();
+
+// --- RESTORED BOOT RENDERERS ---
+renderDevicesTable();
+renderDeviceSelect();
+loadControlLocations();
+// -------------------------------
+
 renderSessionsTable();
 renderTodaysSessions();
 showPage('dashboard');
