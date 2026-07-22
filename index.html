@@ -122,6 +122,8 @@
         .btn-success:hover { background-color: #25a745; border-color: #25a745; }
         .btn-danger { color: white; background-color: var(--danger); border-color: var(--danger); }
         .btn-danger:hover { background-color: #c13c40; border-color: #c13c40; }
+        .btn-warning { color: #212529; background-color: var(--warning); border-color: var(--warning); } /* FIX 8 */
+        .btn-warning:hover { background-color: #e0a000; border-color: #e0a000; }
         .btn-block { display: block; width: 100%; }
         .btn:disabled { opacity: 0.65; pointer-events: none; }
 
@@ -590,9 +592,9 @@
                             </div>
                             <div style="flex: 3; min-width: 300px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                                    <button class="btn" onclick="changeWeek(1)">⬅️ Previous</button>
+                                    <button class="btn" onclick="changeWeek(-1)">⬅️ Previous</button>
                                     <span id="currentChartDateRange" style="font-weight: 600; color: var(--primary); font-size: 14px;"></span>
-                                    <button class="btn" onclick="changeWeek(-1)" id="nextWeekBtn" disabled>Next ➡️</button>
+                                    <button class="btn" onclick="changeWeek(1)" id="nextWeekBtn" disabled>Next ➡️</button>
                                 </div>
                                 <div style="position: relative; height: 350px; max-width: 800px; margin: 0 auto; width: 100%; border: 1px solid var(--gray-200); padding: 10px; border-radius: 8px; background: white;">
                                     <canvas id="weeklyChart" class="chart-canvas slide-center"></canvas>
@@ -722,19 +724,31 @@ async function pullDataFromCloud() {
         const doc = await db.collection("users").doc(currentUser.uid).get();
         if (doc.exists) {
             const cloudData = doc.data();
-            if (cloudData.devices) localStorage.setItem("energy_devices", JSON.stringify(cloudData.devices));
-            if (cloudData.sessions) { sessionsStore = cloudData.sessions; localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore)); }
-            if (cloudData.history) localStorage.setItem("energy_history", JSON.stringify(cloudData.history));
-            
-            if (typeof renderDevicesTable === "function") renderDevicesTable();
-            if (typeof loadControlLocations === "function") loadControlLocations();
-            if (typeof renderDeviceSelect === "function") renderDeviceSelect();
-            if (typeof renderSessionsTable === "function") renderSessionsTable();
-            if (typeof renderTodaysSessions === "function") renderTodaysSessions();
-            if (typeof loadChartDevices === "function") loadChartDevices();
+            // FIX F: Only overwrite localStorage if the cloud actually has data for that field
+            if (cloudData.devices && cloudData.devices.length) localStorage.setItem("energy_devices", JSON.stringify(cloudData.devices));
+            if (cloudData.sessions && cloudData.sessions.length) { sessionsStore = cloudData.sessions; localStorage.setItem("energy_sessions", JSON.stringify(sessionsStore)); }
+            if (cloudData.history && Object.keys(cloudData.history).length) localStorage.setItem("energy_history", JSON.stringify(cloudData.history));
         }
         isCloudReady = true;
-    } catch (error) { console.error("Error pulling from cloud:", error); }
+        // FIX F: Re-render everything AFTER cloud data is loaded so all sections show real data
+        refreshAllSections();
+    } catch (error) {
+        console.error("Error pulling from cloud:", error);
+        isCloudReady = true; // Still allow pushes even if pull fails
+        refreshAllSections();
+    }
+}
+
+// FIX F: Central function to re-render all sections after data loads
+function refreshAllSections() {
+    renderDevicesTable();
+    renderDeviceSelect();
+    loadControlLocations();
+    loadSessionLocations();
+    renderSessionsTable();
+    renderTodaysSessions();
+    loadChartDevices();
+    renderAllDevicesGrid();
 }
 
 async function pushDataToCloud() {
@@ -759,6 +773,13 @@ const SELECTED_DEVICE_KEY = "selectedDeviceId";
 const DEVICES_KEY = "energy_devices";
 const ENERGY_HISTORY_KEY = "energy_history";
         
+// Initialize global state objects FIRST so every function can safely access them
+window.deviceLastSeen = {};
+window.liveDeviceData = {};
+window.deviceStates   = {};
+
+let mqttClient;
+let currentSubs = [];
 let selectedDeviceId = "SOCKET001";
 let lastTelemetryAt = 0;
 let offlineTimer = null;
@@ -781,9 +802,9 @@ function showPage(page) {
     document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
     document.querySelector(`.nav-link[href="#${page}"]`).classList.add('active');
 
-    if (page === 'account') document.getElementById('account-balance').textContent = document.getElementById('balance').textContent;
+    if (page === 'account') document.getElementById('account-balance').innerHTML = document.getElementById('balance').innerHTML; // FIX 11: use innerHTML to preserve the ₦ unit span
     if (page === "sessions") { loadSessionsLocal(); renderSessionsTable(); renderTodaysSessions(); }
-    if (page === "reports") { loadChartDevices(); generateSmartInsights(); }
+    if (page === "reports") { loadChartDevices(); } // FIX J: generateSmartInsights only runs when user clicks "Smart Insights" button
     if (page === "control") { loadControlLocations(); }
     if (page === "all-devices") { renderAllDevicesGrid(); }
     closeSidebar();
@@ -826,6 +847,19 @@ function storeDailyMetrics(deviceId, data) {
   history[deviceId][today] = record;
   localStorage.setItem(ENERGY_HISTORY_KEY, JSON.stringify(history));
   // Note: pushDataToCloud is handled periodically or on major actions to prevent spamming
+}
+
+// FIX 7: updateAccountSection was called but never defined. Added here.
+function updateAccountSection(data) {
+    const balanceEl = document.getElementById('account-balance');
+    if (balanceEl && data.balance !== undefined) {
+        balanceEl.innerHTML = `${Number(data.balance).toFixed(2)}<span class="unit">₦</span>`;
+    }
+    const rateEl = document.getElementById('consumption-rate');
+    if (rateEl && data.costPerKWh !== undefined && data.power !== undefined) {
+        const dailyRate = ((Number(data.power) / 1000) * 24 * Number(data.costPerKWh)).toFixed(2);
+        rateEl.innerHTML = `${dailyRate}<span class="unit">₦/day</span>`;
+    }
 }
 
 function handleTelemetry(data) {
@@ -914,8 +948,11 @@ setInterval(() => {
     if (document.getElementById('all-devices-section').classList.contains('active')) renderAllDevicesGrid();
 }, 5000);
 
-const existingDevices = loadDevices();
-if (!existingDevices.length) { saveDevices([{ deviceId: "SOCKET001", displayName: "SOCKET001", location: "Main Room" }]); }
+// FIX G: Only inject a default device if there is genuinely nothing in localStorage
+// AND no user is logged in (cloud pull will handle it otherwise)
+if (!loadDevices().length && !currentUser) {
+    saveDevices([{ deviceId: "SOCKET001", displayName: "SOCKET001", location: "Main Room" }]);
+}
 renderDeviceSelect();
 renderDevicesTable();
 
@@ -1053,40 +1090,7 @@ function updateControlSection(data) {
     updateElement('control-current-status', anyCurWarn ? 'OVERLOAD' : 'NORMAL');
 }
 
-function renderControlGrid() {
-    const locSelect = document.getElementById("controlLocationSelect");
-    const grid = document.getElementById("relayGrid");
-    if (!locSelect || !grid) return;
-    const location = locSelect.value;
-    const devices = loadDevices().filter(d => d.location === location);
-    if (!devices.length) { grid.innerHTML = "<p style='color:#6c757d;'>No devices found.</p>"; return; }
-    
-    let html = `<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">`;
-    devices.forEach(dev => {
-        const lastSeen = window.deviceLastSeen[dev.deviceId] || 0;
-        const isOnline = (Date.now() - lastSeen) < 15000; 
-        const isOn = window.deviceStates[dev.deviceId] === true;
-        
-        let statusColor = isOnline ? (isOn ? "var(--accent)" : "var(--gray-500)") : "var(--danger)";
-        let statusText = isOnline ? (isOn ? "ON" : "OFF") : "OFFLINE";
-        const onDisabled = (!isOnline || isOn) ? 'disabled' : '';
-        const offDisabled = (!isOnline || !isOn) ? 'disabled' : '';
-        
-        html += `
-            <div style="border:1px solid var(--gray-300); border-radius:8px; padding:15px; background:white; text-align:center;">
-                <div style="width:12px; height:12px; border-radius:50%; background:${statusColor}; margin: 0 auto 5px;"></div>
-                <div style="font-size:11px; color:${isOnline ? 'var(--gray-600)' : 'var(--danger)'}; font-weight:bold; margin-bottom:10px;">${statusText}</div>
-                <h4 style="margin-bottom:5px; color:var(--dark);">${escapeHtml(dev.displayName)}</h4>
-                <p style="font-size:12px; color:var(--gray-600); margin-bottom:15px;">${escapeHtml(dev.deviceId)}</p>
-                <div style="display:flex; gap:8px;">
-                    <button class="btn btn-success" style="flex:1; padding:6px;" onclick="toggleSpecificRelay('${dev.deviceId}', 1)" ${onDisabled}>ON</button>
-                    <button class="btn btn-danger" style="flex:1; padding:6px;" onclick="toggleSpecificRelay('${dev.deviceId}', 0)" ${offDisabled}>OFF</button>
-                </div>
-            </div>`;
-    });
-    grid.innerHTML = html + `</div>`;
-    updateControlSection(); // Also update the system status card
-}
+// FIX 2: Duplicate renderControlGrid removed here. Authoritative version kept below near loadControlLocations.
 
 // ----------------------------------------------------
 // CSV EXPORT LOGIC
@@ -1167,32 +1171,7 @@ function showAlert(message, type, alertElementId) {
 }
 function uuid4() { if (crypto && crypto.randomUUID) return crypto.randomUUID(); return "xxxxxxxxyxxx4xxxyxxxxxxxxxxxxxxx".replace(/[xy]/g, c => { const r = (Math.random()*16)|0, v = c === "x" ? r : (r&0x3)|0x8; return v.toString(16); }); }
 
-// Boilerplate init functions from original code
-function initMQTT() {
- mqttClient = mqtt.connect(MQTT_BROKER, { username: MQTT_USER, password: MQTT_PASS, clean: true, keepalive: 60, connectTimeout: 30000, reconnectPeriod: 5000, resubscribe: true, protocolVersion: 4 });
- mqttClient.on("connect", () => { subscribeToUniversal(); });
- mqttClient.on("message", (topic, payload) => {
-  const msg = payload.toString();
-  window.deviceLastSeen = window.deviceLastSeen || {}; window.liveDeviceData = window.liveDeviceData || {};
-  const topicParts = topic.split('/'); if (topicParts.length < 2) return;
-  const devId = topicParts[1]; window.deviceLastSeen[devId] = Date.now(); 
-  let data; try { data = JSON.parse(msg); } catch (e) { return; }
-
-  if (topic.endsWith("/sessions/ack")) { if (data && (data.ok === true || data.success === true)) window.lastSessionsAckOk = true; return; }
-  if (topic.endsWith("/relay/state")) {
-    const state = (data.state !== undefined) ? data.state : data.relayState;
-    window.deviceStates[devId] = !!state;
-    if (document.getElementById('control-section').classList.contains('active')) renderControlGrid();
-    if (document.getElementById('all-devices-section').classList.contains('active')) renderAllDevicesGrid();
-    return;
-  }
-  if (topic.endsWith("/telemetry")) {
-    window.liveDeviceData[devId] = data;
-    if (data.energy !== undefined) storeDailyMetrics(devId, data);
-    if (document.getElementById('dashboard-section').classList.contains('active')) updateLocationDashboard();
-  }
- });
-}
+// FIX 1: Duplicate initMQTT removed here. Authoritative version (with error/reconnect/close listeners) kept below.
 
 function subscribeToUniversal(){
   if (!mqttClient || !mqttClient.connected) return;
@@ -1392,17 +1371,8 @@ setInterval(() => {
   }
 }, 60000); // every 60s
 
-document.getElementById("dashboardLocationSelect").addEventListener("change", (e) => {
-  window.selectedLocation = e.target.value;
-  updateLocationDashboard(); 
-});
-
-// Add this directly below it to automatically catch devices going offline
-setInterval(() => {
-    if (document.getElementById('dashboard-section').classList.contains('active')) {
-        updateLocationDashboard();
-    }
-}, 5000);
+// FIX 3: Duplicate dashboardLocationSelect "change" listener removed here (original kept at line ~903).
+// FIX 10: Duplicate dashboard offline-check setInterval also removed here (original kept in the consolidated setInterval above).
         
 // ✅ Restore saved device before anything else
   const saved = loadSelectedDevice();
@@ -1419,66 +1389,9 @@ if (!selectedDeviceId) {
   }
 }
 
-        function updateLocationDashboard() {
-    const locSelect = document.getElementById("dashboardLocationSelect");
-    if (!locSelect) return;
-    const currentLoc = locSelect.value;
-
-    const devicesInLoc = loadDevices().filter(d => d.location === currentLoc);
-
-    let totalPower = 0, totalCurrent = 0, avgVoltage = 0, totalBalance = 0, totalEnergy = 0;
-    let validVoltageCount = 0, anyOnline = false;
-
-    // Aggregate data ONLY for online devices in this location
-    devicesInLoc.forEach(dev => {
-        const lastSeen = window.deviceLastSeen[dev.deviceId] || 0;
-        if ((Date.now() - lastSeen) < 15000) {
-            anyOnline = true;
-            const data = window.liveDeviceData[dev.deviceId] || {};
-            
-            totalPower += Number(data.power || 0);
-            totalCurrent += Number(data.current || 0);
-            totalBalance += Number(data.balance || 0);
-            totalEnergy += Number(data.energy || 0);
-
-            if (data.voltage) {
-                avgVoltage += Number(data.voltage);
-                validVoltageCount++;
-            }
-        }
-    });
-
-    if (validVoltageCount > 0) avgVoltage = avgVoltage / validVoltageCount;
-
-    // If everything in this location is offline, show blanks
-    if (!anyOnline) {
-         updateElement('power-status', 'OFFLINE');
-         updateStatusIndicator('power-indicator', 'status-inactive');
-         updateElement('balance', `--<span class="unit">₦</span>`);
-         updateElement('voltage', `--<span class="unit">V</span>`);
-         updateElement('current', `--<span class="unit">A</span>`);
-         updateElement('power',   `--<span class="unit">W</span>`);
-         updateElement('energy-value', `-- kWh`);
-         document.getElementById('update-timestamp').textContent = `Last updated: OFFLINE`;
-         return;
-    }
-
-    // Push combined data to UI
-    updateElement('power-status', 'ONLINE');
-    updateStatusIndicator('power-indicator', 'status-active');
-    updateElement('balance', `${totalBalance.toFixed(2)}<span class="unit">₦</span>`);
-    updateElement('voltage', `${avgVoltage.toFixed(1)}<span class="unit">V</span>`);
-    updateElement('current', `${totalCurrent.toFixed(3)}<span class="unit">A</span>`);
-    updateElement('power',   `${totalPower.toFixed(1)}<span class="unit">W</span>`);
-    updateElement('energy-value', `${totalEnergy.toFixed(3)} kWh`);
-
-    document.getElementById('update-timestamp').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-}
         // ==========================================
 // NEW LOCATION-BASED LOGIC (CONTROL & SESSIONS)
 // ==========================================
-
-window.deviceStates = window.deviceStates || {}; // Global object to track relay states
 
 // --- CONTROL SECTION LOGIC ---
 function loadControlLocations() {
@@ -1558,12 +1471,8 @@ function renderControlGrid() {
     html += `</div>`;
     grid.innerHTML = html;
 }
-     setInterval(() => {
-    if (document.getElementById('control-section').classList.contains('active')) {
-        renderControlGrid();
-    }
-}, 5000); // Refreshes grid every 5 seconds to catch offline devices
-        
+// FIX 10: Duplicate renderControlGrid setInterval removed here (handled by consolidated setInterval above).
+
 function toggleSpecificRelay(deviceId, state) {
     window.deviceLastSeen = window.deviceLastSeen || {};
     const lastSeen = window.deviceLastSeen[deviceId] || 0;
@@ -1896,10 +1805,36 @@ function clearAllSessions() {
 
 function closeSessionModal() { document.getElementById("sessionModal").style.display = "none"; }
 
+// FIX 6: Day buttons were never rendered — sessDaysWrap was always empty so days array was always [].
+function renderDayButtons() {
+    const wrap = document.getElementById("sessDaysWrap");
+    if (!wrap) return;
+    const labels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    wrap.dataset.selectedDays = "[]";
+    wrap.innerHTML = labels.map((d, i) => `
+        <button type="button" class="btn" style="padding:6px 10px; min-width:48px;"
+            onclick="toggleDayBtn(this, ${i+1})">${d}</button>
+    `).join("");
+}
+
+function toggleDayBtn(btn, dayNum) {
+    const wrap = document.getElementById("sessDaysWrap");
+    let days = JSON.parse(wrap.dataset.selectedDays || "[]");
+    if (days.includes(dayNum)) {
+        days = days.filter(d => d !== dayNum);
+        btn.classList.remove("btn-primary");
+    } else {
+        days.push(dayNum);
+        btn.classList.add("btn-primary");
+    }
+    wrap.dataset.selectedDays = JSON.stringify(days);
+}
+
 function openSessionModal() {
     editingSessionId = null;
     document.getElementById("sessionModalTitle").innerText = "New Session";
     loadSessionLocations();
+    renderDayButtons(); // FIX 6: populate day-of-week buttons
     document.getElementById("sessionModal").style.display = "flex";
 }
 // ----------------------------------
@@ -1907,7 +1842,7 @@ function openSessionModal() {
 // THE MISSING ENGINE BLOCK (RESTORED LOGIC)
 // ==========================================
 
-let currentSubs = []; // Moved up here to fix the MQTT Race Condition
+// currentSubs declared at top of script (FIX 4)
 let currentChartOffset = 0; 
 let chartInstance = null;
 
@@ -1924,15 +1859,57 @@ function loadChartDevices() {
     loadDevices().forEach(d => {
         select.appendChild(new Option(d.displayName, d.deviceId));
     });
-    select.addEventListener("change", () => renderWeeklyChart());
+    // FIX D: Use onchange (not addEventListener) to avoid stacking duplicate listeners each page visit
+    select.onchange = () => { currentChartOffset = 0; renderWeeklyChart(); renderHistoryList(); };
+    renderHistoryList();
     renderWeeklyChart();
 }
 
+// FIX D: historyListContainer was never populated — added this function
+function renderHistoryList() {
+    const container = document.getElementById("historyListContainer");
+    if (!container) return;
+    const history = JSON.parse(localStorage.getItem("energy_history") || "{}");
+    const devId = document.getElementById("chartDeviceSelect")?.value || "ALL";
+
+    // Collect all unique week start dates from history
+    const allDates = new Set();
+    const targetDevices = devId === "ALL" ? Object.keys(history) : [devId];
+    targetDevices.forEach(id => { if (history[id]) Object.keys(history[id]).forEach(d => allDates.add(d)); });
+
+    if (!allDates.size) { container.innerHTML = '<p style="color:var(--gray-500); font-size:13px;">No history yet.</p>'; return; }
+
+    // Group dates into weeks and list them
+    const sorted = [...allDates].sort().reverse();
+    const weeks = [];
+    const seen = new Set();
+    sorted.forEach(dateStr => {
+        const d = new Date(dateStr);
+        const weekStart = new Date(d); weekStart.setDate(d.getDate() - d.getDay() + 1);
+        const key = weekStart.toISOString().split("T")[0];
+        if (!seen.has(key)) { seen.add(key); weeks.push({ key, label: weekStart.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' – ' + new Date(weekStart.getTime() + 6*86400000).toLocaleDateString('en-US', {month:'short', day:'numeric'}) }); }
+    });
+
+    let html = "";
+    weeks.slice(0, 12).forEach((w, i) => {
+        html += `<div class="history-item${i === currentChartOffset ? ' active' : ''}" onclick="jumpToWeek(${i})">${w.label}</div>`;
+    });
+    container.innerHTML = html || '<p style="color:var(--gray-500); font-size:13px;">No history yet.</p>';
+}
+
+function jumpToWeek(offset) {
+    currentChartOffset = offset;
+    document.getElementById("nextWeekBtn").disabled = (currentChartOffset === 0);
+    renderWeeklyChart();
+    renderHistoryList();
+}
+
 function changeWeek(direction) {
-    currentChartOffset += direction;
+    currentChartOffset -= direction;
     if (currentChartOffset < 0) currentChartOffset = 0;
     document.getElementById("nextWeekBtn").disabled = (currentChartOffset === 0);
     renderWeeklyChart();
+    renderHistoryList(); // FIX L: keep sidebar week list in sync with active chart
 }
 
 function renderWeeklyChart() {
@@ -1984,15 +1961,39 @@ function renderWeeklyChart() {
         data: {
             labels: labels,
             datasets: [
-                { label: 'Energy (kWh)', data: energyData, backgroundColor: 'rgba(45, 198, 83, 0.6)', borderColor: '#2dc653', borderWidth: 1, yAxisID: 'y' },
-                { label: 'Avg Power (W)', data: powerData, type: 'line', borderColor: '#3e92cc', backgroundColor: '#3e92cc', tension: 0.3, yAxisID: 'y1' }
+                {
+                    label: 'Energy (kWh)',
+                    data: energyData,
+                    backgroundColor: 'rgba(45, 198, 83, 0.6)',
+                    borderColor: '#2dc653',
+                    borderWidth: 1,
+                    yAxisID: 'y'
+                },
+                {
+                    // FIX E: line was invisible — backgroundColor was solid blue (filled area), fill must be false,
+                    // and pointRadius added so data points are visible
+                    label: 'Avg Power (W)',
+                    data: powerData,
+                    type: 'line',
+                    borderColor: '#3e92cc',
+                    backgroundColor: 'rgba(62,146,204,0.15)',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    borderWidth: 2,
+                    yAxisID: 'y1'
+                }
             ]
         },
         options: {
-            responsive: true, maintainAspectRatio: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true, position: 'top' } },
             scales: {
-                y: { type: 'linear', display: true, position: 'left', title: {display: true, text: 'Energy (kWh)'} },
-                y1: { type: 'linear', display: true, position: 'right', title: {display: true, text: 'Power (W)'}, grid: {drawOnChartArea: false} }
+                y:  { type: 'linear', display: true, position: 'left',  title: { display: true, text: 'Energy (kWh)' }, beginAtZero: true },
+                y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Power (W)'    }, beginAtZero: true, grid: { drawOnChartArea: false } }
             }
         }
     });
@@ -2012,12 +2013,17 @@ function addDevice() {
     saveDevices(devices);
     showAlert("Device added successfully!", "success", "devices-alert");
 
+    // Clear all input fields
     document.getElementById("newDeviceId").value = "";
     document.getElementById("newDeviceName").value = "";
+    document.getElementById("newDeviceLocation").value = "";
+
+    // FIX I: Refresh every section that shows device data
     renderDevicesTable();
     renderDeviceSelect();
-    if (typeof loadControlLocations === "function") loadControlLocations();
-    if (typeof loadSessionLocations === "function") loadSessionLocations();
+    renderAllDevicesGrid();
+    loadControlLocations();
+    loadSessionLocations();
 }
 
 function renderDevicesTable() {
@@ -2046,8 +2052,9 @@ function deleteDevice(id) {
     saveDevices(devices);
     renderDevicesTable();
     renderDeviceSelect();
+    renderAllDevicesGrid(); // FIX K: keep All Devices grid in sync
     loadControlLocations();
-    loadSessionLocations();
+    if (typeof loadSessionLocations === "function") loadSessionLocations();
 }
 
 // 4. Restored Billing & Recharge Logic
@@ -2102,16 +2109,15 @@ function factoryReset() {
     if(typeof auth !== 'undefined' && auth) auth.signOut();
     window.location.reload();
 }
-// ----------------------------------       
+// ----------------------------------
 initMQTT();
 loadSessionsLocal();
-
-// --- RESTORED BOOT RENDERERS ---
+// FIX H: Initial render pass with whatever is in localStorage right now.
+// A second full render fires in refreshAllSections() once cloud data arrives.
 renderDevicesTable();
 renderDeviceSelect();
 loadControlLocations();
-// -------------------------------
-
+loadSessionLocations();
 renderSessionsTable();
 renderTodaysSessions();
 showPage('dashboard');
