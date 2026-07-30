@@ -619,7 +619,10 @@
                             <input type="date" id="exportEndDate" class="form-input">
                         </div>
                     </div>
-                    <button class="btn btn-success" onclick="exportToCSV()">📊 Download CSV Report</button>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-success" onclick="exportToCSV()">📊 Download CSV</button>
+                        <button class="btn btn-danger" onclick="exportToPDF()">📄 Download PDF</button>
+                    </div>
                     <div id="export-alert" class="alert" style="display:none; margin-top: 15px;"></div>
                 </div>
             </div>
@@ -649,6 +652,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script>
         
 // OPTIMISTIC UI: Instantly drop the loading screen if the browser remembers a session
@@ -1096,58 +1101,90 @@ function updateControlSection(data) {
 // CSV EXPORT LOGIC
 // ----------------------------------------------------
 function exportToCSV() {
-    const startDateRaw = document.getElementById('exportStartDate').value;
-    const endDateRaw = document.getElementById('exportEndDate').value;
-    if(!startDateRaw || !endDateRaw) return showAlert("Please select both Start and End dates.", "danger", "export-alert");
+    const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
+    if(!start || !end) return showAlert("Select both dates.", "danger", "export-alert");
+    const d1 = new Date(start), d2 = new Date(end);
+    if((d2-d1)/(1000*60*60*24) > 90) return showAlert("Max 90 days allowed.", "danger", "export-alert");
     
-    const start = new Date(startDateRaw);
-    const end = new Date(endDateRaw);
-    const diffDays = (end - start) / (1000 * 60 * 60 * 24);
+    const hist = JSON.parse(localStorage.getItem("energy_history")||"{}");
+    const rate = Number(document.getElementById("costPerKWh")?.value || 200);
+    const devs = loadDevices();
     
-    if(diffDays < 0) return showAlert("End date must be after Start date.", "danger", "export-alert");
-    if(diffDays > 90) return showAlert("Date range cannot exceed 3 months (90 days).", "danger", "export-alert");
+    let csv = "Date,Device ID,Device Name,Location,Avg Voltage (V),Avg Current (A),Avg Power (W),Total Energy (kWh),Est. Cost (NGN)\n";
+    let found = false;
+    for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+        let k = d.toISOString().split('T')[0];
+        for (let id in hist) {
+            if(hist[id][k]) {
+                found = true; let r = hist[id][k];
+                let dev = devs.find(x=>x.deviceId===id) || {displayName: id, location:"Unk"};
+                let e = r.energy||0;
+                csv += `${k},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current\vert{}\vert{}0).toFixed(2)},${(r.power||0).toFixed(1)},${e.toFixed(3)},${(e*rate).toFixed(2)}\n`;
+            }
+        }
+    }
+    if(!found) return showAlert("No data found.", "warning", "export-alert");
+    
+    // THIS BLOB FIXES EXCEL FORMATTING
+    const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `Report_${start}_${end}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
 
-    const history = JSON.parse(localStorage.getItem(ENERGY_HISTORY_KEY)) || {};
-    const costPerKWh = Number(document.getElementById("costPerKWh").value) || 200;
-    const devicesList = loadDevices();
+function exportToPDF() {
+    const start = document.getElementById('exportStartDate').value;
+    const end = document.getElementById('exportEndDate').value;
+    if(!start || !end) return showAlert("Select both dates.", "danger", "export-alert");
+    
+    const hist = JSON.parse(localStorage.getItem("energy_history")||"{}");
+    const rate = Number(document.getElementById("costPerKWh")?.value || 200);
+    const devs = loadDevices();
 
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "DTEnergy Consumption Report\n";
-    csvContent += `Generated:,${new Date().toLocaleDateString()}\n\n`;
-    csvContent += "Date,Device ID,Device Name,Location,Avg Voltage (V),Avg Current (A),Avg Power (W),Total Energy (kWh),Est. Cost (NGN)\n";
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('landscape'); 
+
+    doc.setFontSize(18);
+    doc.text("DTEnergy Consumption Report", 14, 22);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Date Range: ${start} to${end}`, 14, 30);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36);
+
+    const tableColumn = ["Date", "Device Name", "Location", "Voltage (V)", "Current (A)", "Power (W)", "Energy (kWh)", "Cost (NGN)"];
+    const tableRows = [];
 
     let hasData = false;
-
-    // Loop day by day
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        let dateStr = d.toISOString().split('T')[0];
-        
-        for (let deviceId in history) {
-            let record = history[deviceId][dateStr];
-            if (record) {
+    let d1 = new Date(start), d2 = new Date(end);
+    for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+        let k = d.toISOString().split('T')[0];
+        for (let id in hist) {
+            if(hist[id][k]) {
                 hasData = true;
-                let energy = typeof record === 'number' ? record : (record.energy || 0);
-                let voltage = record.voltage ? record.voltage.toFixed(1) : "--";
-                let current = record.current ? record.current.toFixed(3) : "--";
-                let power = record.power ? record.power.toFixed(1) : "--";
-                let cost = (energy * costPerKWh).toFixed(2);
-                
-                let devMeta = devicesList.find(x => x.deviceId === deviceId) || { location: "Unknown", displayName: "Unknown" };
-                
-                csvContent += `${dateStr},${deviceId},${devMeta.displayName},${devMeta.location},${voltage},${current},${power},${energy.toFixed(3)},${cost}\n`;
+                let r = hist[id][k];
+                let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unk"};
+                let e = r.energy||0;
+                tableRows.push([
+                    k, dev.displayName, dev.location,
+                    (r.voltage||0).toFixed(1), (r.current||0).toFixed(2),
+                    (r.power||0).toFixed(1), e.toFixed(3), (e*rate).toFixed(2)
+                ]);
             }
         }
     }
 
-    if (!hasData) return showAlert("No data found for the selected date range.", "warning", "export-alert");
+    if(!hasData) return showAlert("No data found.", "warning", "export-alert");
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `DTEnergy_Report_${startDateRaw}_to_${endDateRaw}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    doc.autoTable({
+        startY: 45,
+        head: [tableColumn],
+        body: tableRows,
+        theme: 'striped',
+        headStyles: { fillColor: [10, 36, 99] } 
+    });
+
+    doc.save(`DTEnergy_Report_${start}_to_${end}.pdf`);
 }
 
 // Ensure default dates for CSV export (Last 7 days)
@@ -2034,17 +2071,36 @@ function renderDevicesTable() {
 
     let html = '<table style="width:100%; border-collapse:collapse;"><thead><tr style="text-align:left; border-bottom:1px solid #dee2e6;"><th>ID</th><th>Name</th><th>Location</th><th>Actions</th></tr></thead><tbody>';
     devices.forEach(d => {
-        html += `<tr style="border-bottom:1px solid #dee2e6;">
-            <td style="padding:10px;">${escapeHtml(d.deviceId)}</td>
-            <td style="padding:10px;">${escapeHtml(d.displayName)}</td>
-            <td style="padding:10px;">${escapeHtml(d.location || "Unassigned")}</td>
-            <td style="padding:10px;"><button class="btn btn-danger" style="padding:4px 8px; font-size:12px;" onclick="deleteDevice('${d.deviceId}')">Remove</button></td>
+       html += `<tr style="border-bottom:1px solid #eee;">
+            <td style="padding:10px;">${escapeHtml(x.deviceId)}</td>
+            <td style="padding:10px;">${escapeHtml(x.displayName)}</td>
+            <td style="padding:10px;">${escapeHtml(x.location || "Unassigned")}</td>
+            <td style="padding:10px;">
+                <button class="btn btn-warning" style="padding:4px 8px; font-size:12px; margin-right:5px; color:#212529;" onclick="editDevice('${x.deviceId}')">Edit</button>
+                <button class="btn btn-danger" style="padding:4px 8px; font-size:12px;" onclick="deleteDevice('${x.deviceId}')">Del</button>
+            </td>
         </tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
 }
 
+function editDevice(id) {
+    let devices = loadDevices();
+    let devIndex = devices.findIndex(d => d.deviceId === id);
+    if(devIndex === -1) return;
+    
+    let newName = prompt("Enter new Display Name for " + id + ":", devices[devIndex].displayName);
+    if(newName !== null && newName.trim() !== "") {
+        devices[devIndex].displayName = newName.trim();
+        saveDevices(devices);
+        renderDevicesTable();
+        renderDeviceSelect();
+        renderAllDevicesGrid();
+        showAlert("Device renamed!", "success", "devices-alert");
+    }
+}
+        
 function deleteDevice(id) {
     if(!confirm("Remove this device?")) return;
     let devices = loadDevices();
