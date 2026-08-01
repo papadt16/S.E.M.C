@@ -461,6 +461,7 @@
                       <div class="form-group"><label class="form-label">Duration (minutes)</label><input id="sessDuration" type="number" class="form-input" value="30" min="1" step="1" /></div>
                     </div>
                     <div class="form-group"><label class="form-label">Days</label><div id="sessDaysWrap" style="display:flex; gap:8px; flex-wrap:wrap;"></div></div>
+                      <div class="form-group" style="margin-top:15px;"><label style="display:flex; align-items:center; gap:8px; font-weight:500; cursor:pointer;"><input type="checkbox" id="sessDuplicate" checked> Auto-create duplicate session (+1 Hour)</label></div>
                     <div style="display:flex; gap:10px; justify-content:flex-end;"><button class="btn" onclick="closeSessionModal()">Cancel</button><button class="btn btn-success" onclick="saveSessionFromModal()">Save</button></div>
                   </div>
                 </div>
@@ -826,45 +827,45 @@ function n(v, fallback = null) {
 // ----------------------------------------------------
 // NEW HISTORY LOGIC (V, I, P, E)
 // ----------------------------------------------------
-function storeDailyMetrics(deviceId, data) {
-  const today = new Date().toISOString().split("T")[0];
-  let history = JSON.parse(localStorage.getItem(ENERGY_HISTORY_KEY)) || {};
-  if (!history[deviceId]) history[deviceId] = {};
 
-  let record = history[deviceId][today];
-  // Convert old numeric format to object if necessary
-  if (typeof record === 'number') record = { energy: record, count: 1 };
-  if (!record) record = { energy: 0, voltage: 0, current: 0, power: 0, count: 0 };
+// =======================================================
+// 1. HOURLY METRICS ENGINE
+// =======================================================
+function storeHourlyMetrics(deviceId, data) {
+    const now = new Date();
+    const dayKey = now.toISOString().split("T")[0]; 
+    const hourKey = String(now.getHours()).padStart(2, '0') + ":00"; 
 
-  const newV = Number(data.voltage || 0);
-  const newI = Number(data.current || 0);
-  const newP = Number(data.power || 0);
-  const newE = Number(data.energy || 0);
+    let history = JSON.parse(localStorage.getItem("energy_history")) || {};
+    if (!history[deviceId]) history[deviceId] = {};
+    if (!history[deviceId][dayKey]) history[deviceId][dayKey] = {}; 
 
-  record.energy = Math.max(record.energy, newE); // Max energy
-  if (newV > 0 && newI >= 0) {
-      record.count = (record.count || 0) + 1;
-      record.voltage = record.voltage + (newV - record.voltage) / record.count;
-      record.current = record.current + (newI - record.current) / record.count;
-      record.power = record.power + (newP - record.power) / record.count;
-  }
-
-  history[deviceId][today] = record;
-  localStorage.setItem(ENERGY_HISTORY_KEY, JSON.stringify(history));
-  // Note: pushDataToCloud is handled periodically or on major actions to prevent spamming
-}
-
-// FIX 7: updateAccountSection was called but never defined. Added here.
-function updateAccountSection(data) {
-    const balanceEl = document.getElementById('account-balance');
-    if (balanceEl && data.balance !== undefined) {
-        balanceEl.innerHTML = `${Number(data.balance).toFixed(2)}<span class="unit">₦</span>`;
+    // Auto-migrate old daily data so charts don't break
+    if (history[deviceId][dayKey].energy !== undefined) {
+        const oldData = history[deviceId][dayKey];
+        history[deviceId][dayKey] = { "00:00": oldData };
     }
-    const rateEl = document.getElementById('consumption-rate');
-    if (rateEl && data.costPerKWh !== undefined && data.power !== undefined) {
-        const dailyRate = ((Number(data.power) / 1000) * 24 * Number(data.costPerKWh)).toFixed(2);
-        rateEl.innerHTML = `${dailyRate}<span class="unit">₦/day</span>`;
+
+    let record = history[deviceId][dayKey][hourKey];
+    if (!record) record = { energy: 0, voltage: 0, current: 0, power: 0, temp: 0, count: 0 };
+
+    const newV = Number(data.voltage || 0);
+    const newI = Number(data.current || 0);
+    const newP = Number(data.power || 0);
+    const newE = Number(data.energy || 0);
+    const newT = Number(data.temperature || 0);
+
+    record.energy = Math.max(record.energy, newE); 
+    if (newV > 0 && newI >= 0) {
+        record.count = (record.count || 0) + 1;
+        record.voltage = record.voltage + (newV - record.voltage) / record.count;
+        record.current = record.current + (newI - record.current) / record.count;
+        record.power = record.power + (newP - record.power) / record.count;
+        record.temp = record.temp + (newT - record.temp) / record.count;
     }
+
+    history[deviceId][dayKey][hourKey] = record;
+    localStorage.setItem("energy_history", JSON.stringify(history));
 }
 
 function handleTelemetry(data) {
@@ -873,13 +874,10 @@ function handleTelemetry(data) {
    window.lastTelemetryTs = Date.now();
    window.latestBalanceValue = Number(data.balance ?? 0);
     
-   // Only save history if there is real energy data
-   if (data.energy !== undefined) {
-      storeDailyMetrics(data.deviceId || selectedDeviceId, data);
-   }
+   if (data.energy !== undefined) storeHourlyMetrics(data.deviceId || selectedDeviceId, data);
     
-   updateAccountSection(data);
-   updateControlSection(data);
+   if (typeof updateAccountSection === "function") updateAccountSection(data);
+   if (typeof updateControlSection === "function") updateControlSection(data);
    
    if (data.overVoltageThreshold !== undefined) document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
    if (data.overCurrentThreshold !== undefined) document.getElementById("overCurrent").value = Number(data.overCurrentThreshold);
@@ -887,10 +885,18 @@ function handleTelemetry(data) {
    if (data.costPerKWh !== undefined) document.getElementById("costPerKWh").value = Number(data.costPerKWh);
          
    const now = new Date();
-   document.getElementById('update-timestamp').textContent = `Last updated: ${now.toLocaleTimeString()}`;
-   document.getElementById('update-status').textContent = `Last Update: ${now.toLocaleTimeString()}`;
+   const timeStr = now.toLocaleTimeString();
+   if (document.getElementById('update-timestamp')) document.getElementById('update-timestamp').textContent = `Last updated: ${timeStr}`;
+   if (document.getElementById('update-status')) document.getElementById('update-status').textContent = `Last Update: ${timeStr}`;
 }
-
+        
+// FIX 7: updateAccountSection was called but never defined. Added here.
+function updateAccountSection(data) {
+    const balanceEl = document.getElementById('account-balance');
+    if (balanceEl && data.balance !== undefined) {
+        balanceEl.innerHTML = `${Number(data.balance).toFixed(2)}<span class="unit">₦</span>`;
+    }
+}
 function loadDevices() { try { return JSON.parse(localStorage.getItem(DEVICES_KEY)) || []; } catch { return []; } }
 function saveDevices(devices) { localStorage.setItem(DEVICES_KEY, JSON.stringify(devices)); pushDataToCloud(); }
 
@@ -1010,6 +1016,10 @@ function updateLocationDashboard() {
     updateElement('power',   `${totalPower.toFixed(1)}<span class="unit">W</span>`);
     updateElement('temperature', `${avgTemp.toFixed(1)}<span class="unit">°C</span>`);
     updateElement('energy-value', `${totalEnergy.toFixed(3)} kWh`);
+    // Calculate total system consumption rate for the Account tab
+    const rateCost = Number(document.getElementById("costPerKWh")?.value || 200);
+    const dailyRate = ((totalPower / 1000) * 24 * rateCost).toFixed(2);
+    updateElement('consumption-rate', `${dailyRate}<span class="unit">₦/day</span>`);
 }
 
 // ----------------------------------------------------
@@ -1097,45 +1107,48 @@ function updateControlSection(data) {
 
 // FIX 2: Duplicate renderControlGrid removed here. Authoritative version kept below near loadControlLocations.
 
-// ----------------------------------------------------
-// CSV EXPORT LOGIC
-// ----------------------------------------------------
+// =======================================================
+// 2. EXPORTS (HOURLY + TEMPERATURE + TOTALS)
+// =======================================================
 function exportToCSV() {
     const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
     if(!start || !end) return showAlert("Select both dates.", "danger", "export-alert");
-    const d1 = new Date(start), d2 = new Date(end);
-    if((d2-d1)/(1000*60*60*24) > 90) return showAlert("Max 90 days allowed.", "danger", "export-alert");
     
     const hist = JSON.parse(localStorage.getItem("energy_history")||"{}");
     const rate = Number(document.getElementById("costPerKWh")?.value || 200);
     const devs = loadDevices();
     
-    let csv = "Date,Device ID,Device Name,Location,Avg Voltage (V),Avg Current (A),Avg Power (W),Total Energy (kWh),Est. Cost (NGN)\n";
+    let csv = "Date,Hour,Device ID,Device Name,Location,Voltage (V),Current (A),Power (W),Temp (C),Energy (kWh),Cost (NGN)\n";
     let found = false;
+    let totalE = 0, totalCost = 0;
+
+    let d1 = new Date(start), d2 = new Date(end);
     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
         let k = d.toISOString().split('T')[0];
         for (let id in hist) {
             if(hist[id][k]) {
-                found = true; let r = hist[id][k];
-                let dev = devs.find(x=>x.deviceId===id) || {displayName: id, location:"Unk"};
-                let e = r.energy||0;
-                csv += `${k},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${(r.power||0).toFixed(1)},${e.toFixed(3)},${(e*rate).toFixed(2)}\n`;
+                for (let hr in hist[id][k]) {
+                    found = true; let r = hist[id][k][hr];
+                    let dev = devs.find(x=>x.deviceId===id) || {displayName: id, location:"Unassigned"};
+                    let e = r.energy||0; let cost = e * rate;
+                    totalE += e; totalCost += cost;
+                    csv += `${k},${hr},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${(r.power||0).toFixed(1)},${(r.temp||0).toFixed(1)},${e.toFixed(3)},${cost.toFixed(2)}\n`;
+                }
             }
         }
     }
     if(!found) return showAlert("No data found.", "warning", "export-alert");
     
-    // THIS BLOB FIXES EXCEL FORMATTING
+    csv += `\n,,,,,,,,TOTALS:,${totalE.toFixed(3)} kWh,${totalCost.toFixed(2)} NGN\n`;
+
     const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `Report_${start}_${end}.csv`;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); 
+    a.download = `Hourly_Report_${start}_to_${end}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function exportToPDF() {
-    const start = document.getElementById('exportStartDate').value;
-    const end = document.getElementById('exportEndDate').value;
+    const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
     if(!start || !end) return showAlert("Select both dates.", "danger", "export-alert");
     
     const hist = JSON.parse(localStorage.getItem("energy_history")||"{}");
@@ -1144,49 +1157,52 @@ function exportToPDF() {
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('landscape'); 
-
-    doc.setFontSize(18);
-    doc.text("DTEnergy Consumption Report", 14, 22);
-    doc.setFontSize(11);
-    doc.setTextColor(100);
-    doc.text(`Date Range: ${start} to${end}`, 14, 30);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36);
-
-    const tableColumn = ["Date", "Device Name", "Location", "Voltage (V)", "Current (A)", "Power (W)", "Energy (kWh)", "Cost (NGN)"];
-    const tableRows = [];
-
     let hasData = false;
+    let pageAdded = false;
+
     let d1 = new Date(start), d2 = new Date(end);
     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
         let k = d.toISOString().split('T')[0];
+        let dayRows = [];
+        let dayTotalE = 0, dayTotalCost = 0;
+
         for (let id in hist) {
             if(hist[id][k]) {
-                hasData = true;
-                let r = hist[id][k];
-                let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unk"};
-                let e = r.energy||0;
-                tableRows.push([
-                    k, dev.displayName, dev.location,
-                    (r.voltage||0).toFixed(1), (r.current||0).toFixed(2),
-                    (r.power||0).toFixed(1), e.toFixed(3), (e*rate).toFixed(2)
-                ]);
+                for (let hr in hist[id][k]) {
+                    hasData = true;
+                    let r = hist[id][k][hr];
+                    let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unassigned"};
+                    let e = r.energy||0; let cost = e * rate;
+                    dayTotalE += e; dayTotalCost += cost;
+                    dayRows.push([hr, dev.displayName, dev.location, (r.voltage||0).toFixed(1), (r.current||0).toFixed(2), (r.power||0).toFixed(1), (r.temp||0).toFixed(1), e.toFixed(3), cost.toFixed(2)]);
+                }
             }
+        }
+
+        if (dayRows.length > 0) {
+            if (pageAdded) doc.addPage(); // 1 Day max per page
+            pageAdded = true;
+
+            doc.setFontSize(16); doc.text(`DTEnergy Daily Report: ${k}`, 14, 22);
+            doc.setFontSize(11); doc.setTextColor(100); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+
+            dayRows.push([{content: 'DAILY TOTALS', colSpan: 7, styles: {halign: 'right', fontStyle: 'bold'}}, dayTotalE.toFixed(3), dayTotalCost.toFixed(2)]);
+
+            doc.autoTable({
+                startY: 35,
+                head: [["Time", "Device", "Location", "Volt (V)", "Curr (A)", "Pwr (W)", "Temp (C)", "Energy (kWh)", "Cost (NGN)"]],
+                body: dayRows,
+                theme: 'striped',
+                headStyles: { fillColor: [10, 36, 99] },
+                footStyles: { fillColor: [233, 236, 239], textColor: [0,0,0], fontStyle: 'bold' }
+            });
         }
     }
 
     if(!hasData) return showAlert("No data found.", "warning", "export-alert");
-
-    doc.autoTable({
-        startY: 45,
-        head: [tableColumn],
-        body: tableRows,
-        theme: 'striped',
-        headStyles: { fillColor: [10, 36, 99] } 
-    });
-
-    doc.save(`DTEnergy_Report_${start}_to_${end}.pdf`);
+    doc.save(`DTEnergy_Hourly_${start}_to_${end}.pdf`);
 }
-
+        
 // Ensure default dates for CSV export (Last 7 days)
 document.addEventListener("DOMContentLoaded", () => {
     const today = new Date();
@@ -1380,15 +1396,12 @@ mqttClient.on("message", (topic, payload) => {
     return;
   }
 
-  if (topic.endsWith("/telemetry")) {
+if (topic.endsWith("/telemetry")) {
     window.liveDeviceData[devId] = data; // Save the raw data
+    handleTelemetry(data); // This now safely routes the data to your history, thresholds, and account tabs!
 
-     if (data.energy !== undefined) {
-        storeDailyMetrics(devId, data); // Uses the new multi-metric tracker
-    }
-
-    if (document.getElementById('dashboard-section').classList.contains('active')) {
-        updateLocationDashboard(); // Update the UI
+    if (document.getElementById('dashboard-section').classList.contains('active') || document.getElementById('account-section').classList.contains('active')) {
+        updateLocationDashboard(); // Update the UI for both tabs
     }
   }
 });
@@ -1579,26 +1592,40 @@ function renderSessionCheckboxes() {
     container.innerHTML = html;
 }
 
-// OVERRIDE the old saveSessionFromModal
+// =======================================================
+// 5. SESSION SAVING & DUPLICATION LOGIC
+// =======================================================
+function addOneHourToTime(hhmm) {
+    let [h, m] = hhmm.split(':').map(Number);
+    h = (h + 1) % 24; 
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+// =======================================================
+// 4. SESSION SAVING & DUPLICATION LOGIC
+// =======================================================
+function addOneHourToTime(hhmm) {
+    let [h, m] = hhmm.split(':').map(Number);
+    h = (h + 1) % 24; 
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
 function saveSessionFromModal() {
     const selectedCbs = Array.from(document.querySelectorAll('.sess-device-cb:checked'));
-    if (!selectedCbs.length) {
-        showAlert("Please select at least one device.", "danger", "sessions-alert");
-        return;
-    }
+    if (!selectedCbs.length) { showAlert("Please select at least one device.", "danger", "sessions-alert"); return; }
 
     const start = document.getElementById("sessStart").value.trim();
     const dur = Number(document.getElementById("sessDuration").value);
     const days = JSON.parse(document.getElementById("sessDaysWrap").dataset.selectedDays || "[]");
+    const doDuplicate = document.getElementById("sessDuplicate")?.checked;
 
     if (!validateHHMM(start)) { showAlert("Invalid Start Time. Use HH:MM", "danger", "sessions-alert"); return; }
     if (!Number.isFinite(dur) || dur <= 0) { showAlert("Invalid duration", "danger", "sessions-alert"); return; }
     if (!days.length) { showAlert("Select at least one day", "danger", "sessions-alert"); return; }
 
-    // Create a session for EVERY checked device
     selectedCbs.forEach(cb => {
         const sessionObj = {
-            id: editingSessionId || uuid4(), // If editing, keep ID, else generate
+            id: editingSessionId || uuid4(),
             deviceId: cb.value,
             deviceName: cb.getAttribute('data-name'),
             startTime: start,
@@ -1610,8 +1637,13 @@ function saveSessionFromModal() {
             sessionsStore = sessionsStore.map(s => s.id === editingSessionId ? sessionObj : s);
         } else {
             sessionsStore.push(sessionObj);
+            // DUPLICATE CREATION LOGIC
+            if (doDuplicate) {
+                const dupObj = { ...sessionObj, id: uuid4(), startTime: addOneHourToTime(start) };
+                sessionsStore.push(dupObj);
+            }
         }
-        editingSessionId = null; // Clear it so it generates new UUIDs if loop continues
+        editingSessionId = null;
     });
 
     saveSessionsLocal();
@@ -1649,96 +1681,51 @@ function getGeminiKey() {
 }
 
 async function generateSmartInsights() {
-    // FIXED: Changed ID to match your HTML
     const container = document.getElementById("ai-insights-container");
     if(!container) return;
     
-    // FIXED: Securely get API key
     const GEMINI_API_KEY = getGeminiKey();
-    if (!GEMINI_API_KEY) {
-        container.innerHTML = `<div style="color: red; text-align: center; padding: 10px;">AI Insights requires an API Key to function. Refresh to try again.</div>`;
-        return;
-    }
+    if (!GEMINI_API_KEY) { container.innerHTML = `<div style="color:red; text-align:center;">AI Insights requires an API Key.</div>`; return; }
 
-    container.innerHTML = `
-        <div style="text-align:center; padding:20px; color:var(--secondary);">
-            <span style="font-size:24px; display:block; margin-bottom:10px;">🤖</span> 
-            AI is analyzing real-time data from your 5 PZEM sensors...
-        </div>`;
+    container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--secondary);"><span style="font-size:24px; display:block; margin-bottom:10px;">🤖</span> AI is analyzing 24-hour load patterns and system temperature...</div>`;
 
-    // Gather live data
     const currentPower = document.getElementById('power')?.textContent || "0";
     const currentVoltage = document.getElementById('voltage')?.textContent || "0";
-    const currentBalance = document.getElementById('balance')?.textContent || "0";
+    const currentTemp = document.getElementById('temperature')?.textContent || "0";
 
-    // FIXED: Updated AI Prompt to handle 5 Relays/PZEMs
     const aiPrompt = `
       You are an expert Smart Energy AI Assistant for a home in Nigeria. 
-      The user's entire system is currently drawing ${currentPower} with a grid voltage of ${currentVoltage}. 
-      Their prepaid balance is ${currentBalance}.
+      System Stats: Power Draw: ${currentPower}, Voltage: ${currentVoltage}, Ambient Enclosure Temp: ${currentTemp}.
       
-      The system controls 5 specific appliances via Relays (Index 0 through 4).
-      Provide a brief, 2-sentence insight on how to optimize overall usage to save money based on these readings.
-      Then, generate a scheduled routine to automate ONE heavy appliance to save power. Pick a logical relayIndex (0 to 4).
+      Analyze the current power profile and deduce the probable type of load running right now (e.g., HVAC/Cooling, Lighting, Inductive/Motors, Resistive Heating). 
+      Suggest a new optimal daily schedule (based on the load type and typical ambient temperatures) to save cost without losing utility.
+      Recommend ONE automated schedule to enforce this. Pick a logical relayIndex (0 to 4).
       You MUST end your response with a JSON block in this exact format (do not add markdown around it):
-      {"startTime": "23:00", "duration": 60, "days": [1,2,3,4,5,6,7], "relayIndex": 2}
+      {"startTime": "14:00", "duration": 45, "days": [1,2,3,4,5], "relayIndex": 2}
     `;
 
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contents: [{ parts: [{ text: aiPrompt }] }] })
         });
-
-        // Handle bad API key errors gracefully
-        if (response.status === 400 || response.status === 403) {
-            localStorage.removeItem("gemini_api_key"); 
-            throw new Error("Invalid API Key");
-        }
+        if (response.status === 400 || response.status === 403) { localStorage.removeItem("gemini_api_key"); throw new Error("Invalid API Key"); }
 
         const data = await response.json();
         const aiText = data.candidates[0].content.parts[0].text;
-
         const jsonMatch = aiText.match(/\{[\s\S]*\}/);
-        let scheduleJson = null;
-        let cleanText = aiText;
+        let scheduleJson = null; let cleanText = aiText;
         
-        if (jsonMatch) {
-            scheduleJson = jsonMatch[0];
-            cleanText = aiText.replace(scheduleJson, '').trim();
-        }
+        if (jsonMatch) { scheduleJson = jsonMatch[0]; cleanText = aiText.replace(scheduleJson, '').trim(); }
 
-        let html = `
-            <div style="background: #e9f5ff; padding: 15px; border-radius: 8px; border: 1px solid #3e92cc; margin-bottom: 15px;">
-                <strong style="color: var(--primary);">🤖 Deep-Dive Insight:</strong><br>
-                <p style="font-size:14px; margin-top:8px;">${cleanText.replace(/\n/g, '<br>')}</p>
-            </div>
-        `;
+        let html = `<div style="background: #e9f5ff; padding: 15px; border-radius: 8px; border: 1px solid #3e92cc; margin-bottom: 15px;"><strong style="color: var(--primary);">🤖 Load Analysis & Insight:</strong><br><p style="font-size:14px; margin-top:8px;">${cleanText.replace(/\n/g, '<br>')}</p></div>`;
 
         if (scheduleJson) {
             window.aiSuggestedSchedule = JSON.parse(scheduleJson);
-            
-            html += `
-                <div style="text-align: center; margin-top: 15px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                    <p style="font-size:14px; color:var(--gray-800); margin-bottom:10px;">
-                        <strong>Suggested Automation:</strong><br>
-                        Turn ON Relay ${window.aiSuggestedSchedule.relayIndex + 1} at ${window.aiSuggestedSchedule.startTime} for ${window.aiSuggestedSchedule.duration} mins.
-                    </p>
-                    <button class="btn btn-success" onclick="implementAIRoutine()" style="width: 100%; font-weight:bold;">
-                        ⚡ Implement Routine Automatically
-                    </button>
-                    <div id="ai-implement-alert" style="display:none; margin-top:10px;" class="alert"></div>
-                </div>
-            `;
+            html += `<div style="text-align: center; margin-top: 15px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);"><p style="font-size:14px; color:var(--gray-800); margin-bottom:10px;"><strong>Suggested Automation:</strong><br>Turn ON Relay ${window.aiSuggestedSchedule.relayIndex + 1} at ${window.aiSuggestedSchedule.startTime} for ${window.aiSuggestedSchedule.duration} mins.</p><button class="btn btn-success" onclick="implementAIRoutine()" style="width: 100%; font-weight:bold;">⚡ Implement Routine Automatically</button><div id="ai-implement-alert" style="display:none; margin-top:10px;" class="alert"></div></div>`;
         }
-
         container.innerHTML = html;
-
-    } catch (error) {
-        console.error("AI Error:", error);
-        container.innerHTML = `<div style="color: red; text-align: center; padding: 10px;">Failed to reach AI Server. Check your API Key and internet.</div>`;
-    }
+    } catch (error) { container.innerHTML = `<div style="color: red; text-align: center;">Failed to reach AI Server.</div>`; }
 }
 
 function implementAIRoutine() {
