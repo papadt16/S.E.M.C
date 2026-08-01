@@ -1763,9 +1763,18 @@ async function generateSmartInsights() {
             html += `<div style="text-align: center; margin-top: 15px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);"><p style="font-size:14px; color:var(--gray-800); margin-bottom:10px;"><strong>Suggested Automation:</strong><br>Turn ON Relay ${window.aiSuggestedSchedule.relayIndex + 1} at ${window.aiSuggestedSchedule.startTime} for ${window.aiSuggestedSchedule.duration} mins.</p><button class="btn btn-success" onclick="implementAIRoutine()" style="width: 100%; font-weight:bold;">⚡ Implement Routine Automatically</button><div id="ai-implement-alert" style="display:none; margin-top:10px;" class="alert"></div></div>`;
         }
         container.innerHTML = html;
-    } catch (error) { container.innerHTML = `<div style="color: red; text-align: center;">Failed to reach AI Server.</div>`; }
+} catch (error) { 
+        console.error("AI Insights Error:", error);
+        container.innerHTML = `
+            <div style="color: red; text-align: center; padding: 15px; border: 1px solid red; border-radius: 8px; background: #fff0f0;">
+                <strong>Failed to reach AI Server.</strong><br>
+                <span style="font-size: 13px; color: #555;">Reason: ${error.message}</span><br>
+                <button class="btn btn-warning" style="margin-top: 15px; padding: 6px 12px; color: #000;" onclick="localStorage.removeItem('gemini_api_key'); window.location.reload();">
+                    🔄 Reset API Key
+                </button>
+            </div>`; 
+    }
 }
-
 function implementAIRoutine() {
     if (!window.aiSuggestedSchedule) return;
     
