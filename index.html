@@ -896,6 +896,47 @@ function updateAccountSection(data) {
     if (balanceEl && data.balance !== undefined) {
         balanceEl.innerHTML = `${Number(data.balance).toFixed(2)}<span class="unit">₦</span>`;
     }
+
+    // --- NEW HISTORICAL CONSUMPTION ALGORITHM ---
+    const hist = JSON.parse(localStorage.getItem("energy_history") || "{}");
+    const rate = Number(document.getElementById("costPerKWh")?.value || 200);
+    
+    let totalEnergyUsed = 0;
+    let uniqueDates = new Set();
+
+    // Loop through every device in the database
+    for (let id in hist) {
+        let globalMin = Infinity;
+        let globalMax = -Infinity;
+        
+        for (let date in hist[id]) {
+            uniqueDates.add(date);
+            
+            // Sweep through every hour to find the absolute lowest and highest cumulative readings
+            for (let hr in hist[id][date]) {
+                let e = hist[id][date][hr].energy || 0;
+                if (e < globalMin) globalMin = e;
+                if (e > globalMax) globalMax = e;
+            }
+        }
+        
+        // Calculate the true historical delta (kWh consumed) for this specific device
+        if (globalMin !== Infinity && globalMax !== -Infinity) {
+            totalEnergyUsed += (globalMax - globalMin);
+        }
+    }
+    
+    // Average the total cost across all recorded days
+    let daysRecorded = uniqueDates.size > 0 ? uniqueDates.size : 1;
+    let avgDailyCost = (totalEnergyUsed / daysRecorded) * rate;
+    
+    // Fallback to 0 if history is empty
+    if (isNaN(avgDailyCost)) avgDailyCost = 0;
+
+    const rateEl = document.getElementById('consumption-rate');
+    if (rateEl) {
+        rateEl.innerHTML = `${avgDailyCost.toFixed(2)}<span class="unit">₦/day</span>`;
+    }
 }
 function loadDevices() { try { return JSON.parse(localStorage.getItem(DEVICES_KEY)) || []; } catch { return []; } }
 function saveDevices(devices) { localStorage.setItem(DEVICES_KEY, JSON.stringify(devices)); pushDataToCloud(); }
@@ -1016,10 +1057,7 @@ function updateLocationDashboard() {
     updateElement('power',   `${totalPower.toFixed(1)}<span class="unit">W</span>`);
     updateElement('temperature', `${avgTemp.toFixed(1)}<span class="unit">°C</span>`);
     updateElement('energy-value', `${totalEnergy.toFixed(3)} kWh`);
-    // Calculate total system consumption rate for the Account tab
-    const rateCost = Number(document.getElementById("costPerKWh")?.value || 200);
-    const dailyRate = ((totalPower / 1000) * 24 * rateCost).toFixed(2);
-    updateElement('consumption-rate', `${dailyRate}<span class="unit">₦/day</span>`);
+
 }
 
 // ----------------------------------------------------
