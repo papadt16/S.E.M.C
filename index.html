@@ -829,24 +829,20 @@ function n(v, fallback = null) {
 // ----------------------------------------------------
 
 // =======================================================
-// 1. HOURLY METRICS ENGINE
+// 1. MINUTE-BY-MINUTE METRICS ENGINE (TESTING MODE)
 // =======================================================
-function storeHourlyMetrics(deviceId, data) {
+function storeMinuteMetrics(deviceId, data) {
     const now = new Date();
     const dayKey = now.toISOString().split("T")[0]; 
-    const hourKey = String(now.getHours()).padStart(2, '0') + ":00"; 
+    const hourKey = String(now.getHours()).padStart(2, '0');
+    const minuteKey = String(now.getMinutes()).padStart(2, '0');
+    const fullTimeKey = `${hourKey}:${minuteKey}`; // e.g., "14:05"
 
     let history = JSON.parse(localStorage.getItem("energy_history")) || {};
     if (!history[deviceId]) history[deviceId] = {};
     if (!history[deviceId][dayKey]) history[deviceId][dayKey] = {}; 
 
-    // Auto-migrate old daily data so charts don't break
-    if (history[deviceId][dayKey].energy !== undefined) {
-        const oldData = history[deviceId][dayKey];
-        history[deviceId][dayKey] = { "00:00": oldData };
-    }
-
-    let record = history[deviceId][dayKey][hourKey];
+    let record = history[deviceId][dayKey][fullTimeKey];
     if (!record) record = { energy: 0, voltage: 0, current: 0, power: 0, temp: 0, count: 0 };
 
     const newV = Number(data.voltage || 0);
@@ -864,7 +860,7 @@ function storeHourlyMetrics(deviceId, data) {
         record.temp = record.temp + (newT - record.temp) / record.count;
     }
 
-    history[deviceId][dayKey][hourKey] = record;
+    history[deviceId][dayKey][fullTimeKey] = record;
     localStorage.setItem("energy_history", JSON.stringify(history));
 }
 
@@ -874,7 +870,8 @@ function handleTelemetry(data) {
    window.lastTelemetryTs = Date.now();
    window.latestBalanceValue = Number(data.balance ?? 0);
     
-   if (data.energy !== undefined) storeHourlyMetrics(data.deviceId || selectedDeviceId, data);
+   // Trigger the new minute-by-minute storage
+   if (data.energy !== undefined) storeMinuteMetrics(data.deviceId || selectedDeviceId, data);
     
    if (typeof updateAccountSection === "function") updateAccountSection(data);
    if (typeof updateControlSection === "function") updateControlSection(data);
@@ -1146,7 +1143,7 @@ function updateControlSection(data) {
 // FIX 2: Duplicate renderControlGrid removed here. Authoritative version kept below near loadControlLocations.
 
 // =======================================================
-// 2. EXPORTS (HOURLY + TEMPERATURE + TOTALS)
+// 2. EXPORTS (MINUTE RESOLUTION + 60-ROW PDF PAGING)
 // =======================================================
 function exportToCSV() {
     const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
@@ -1156,21 +1153,22 @@ function exportToCSV() {
     const rate = Number(document.getElementById("costPerKWh")?.value || 200);
     const devs = loadDevices();
     
-    let csv = "Date,Hour,Device ID,Device Name,Location,Voltage (V),Current (A),Power (W),Temp (C),Energy (kWh),Cost (NGN)\n";
-    let found = false;
-    let totalE = 0, totalCost = 0;
+    let csv = "Date,Time,Device ID,Device Name,Location,Voltage (V),Current (A),Power (W),Temp (C),Energy (kWh),Cost (NGN)\n";
+    let found = false; let totalE = 0, totalCost = 0;
 
     let d1 = new Date(start), d2 = new Date(end);
     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
         let k = d.toISOString().split('T')[0];
         for (let id in hist) {
             if(hist[id][k]) {
-                for (let hr in hist[id][k]) {
-                    found = true; let r = hist[id][k][hr];
+                // Sort the minutes chronologically
+                let times = Object.keys(hist[id][k]).sort();
+                for (let hhmm of times) {
+                    found = true; let r = hist[id][k][hhmm];
                     let dev = devs.find(x=>x.deviceId===id) || {displayName: id, location:"Unassigned"};
                     let e = r.energy||0; let cost = e * rate;
                     totalE += e; totalCost += cost;
-                    csv += `${k},${hr},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${(r.power||0).toFixed(1)},${(r.temp||0).toFixed(1)},${e.toFixed(3)},${cost.toFixed(2)}\n`;
+                    csv += `${k},${hhmm},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${(r.power||0).toFixed(1)},${(r.temp||0).toFixed(1)},${e.toFixed(3)},${cost.toFixed(2)}\n`;
                 }
             }
         }
@@ -1178,10 +1176,9 @@ function exportToCSV() {
     if(!found) return showAlert("No data found.", "warning", "export-alert");
     
     csv += `\n,,,,,,,,TOTALS:,${totalE.toFixed(3)} kWh,${totalCost.toFixed(2)} NGN\n`;
-
     const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); 
-    a.download = `Hourly_Report_${start}_to_${end}.csv`;
+    a.download = `Minute_Report_${start}_to_${end}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
@@ -1195,50 +1192,61 @@ function exportToPDF() {
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('landscape'); 
-    let hasData = false;
-    let pageAdded = false;
+    let hasData = false; let pageAdded = false;
 
     let d1 = new Date(start), d2 = new Date(end);
     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
-        let k = d.toISOString().split('T')[0];
-        let dayRows = [];
-        let dayTotalE = 0, dayTotalCost = 0;
-
+        let dateKey = d.toISOString().split('T')[0];
+        
         for (let id in hist) {
-            if(hist[id][k]) {
-                for (let hr in hist[id][k]) {
+            if(hist[id][dateKey]) {
+                // Group readings by Hour so each page holds exactly 60 minutes
+                let hoursObj = {};
+                for (let hhmm in hist[id][dateKey]) {
+                    let hour = hhmm.split(':')[0]; // Extract the "HH"
+                    if (!hoursObj[hour]) hoursObj[hour] = [];
+                    hoursObj[hour].push({ time: hhmm, data: hist[id][dateKey][hhmm] });
+                }
+
+                let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unassigned"};
+                
+                // For every single hour for this device, create a brand new page
+                for (let hour in hoursObj) {
                     hasData = true;
-                    let r = hist[id][k][hr];
-                    let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unassigned"};
-                    let e = r.energy||0; let cost = e * rate;
-                    dayTotalE += e; dayTotalCost += cost;
-                    dayRows.push([hr, dev.displayName, dev.location, (r.voltage||0).toFixed(1), (r.current||0).toFixed(2), (r.power||0).toFixed(1), (r.temp||0).toFixed(1), e.toFixed(3), cost.toFixed(2)]);
+                    if (pageAdded) doc.addPage();
+                    pageAdded = true;
+
+                    let hourRows = [];
+                    let hourTotalE = 0, hourTotalCost = 0;
+
+                    // Sort minutes chronologically 00 -> 59
+                    hoursObj[hour].sort((a,b) => a.time.localeCompare(b.time)).forEach(record => {
+                        let r = record.data;
+                        let e = r.energy||0; let cost = e * rate;
+                        hourTotalE += e; hourTotalCost += cost;
+                        hourRows.push([record.time, dev.displayName, dev.location, (r.voltage||0).toFixed(1), (r.current||0).toFixed(2), (r.power||0).toFixed(1), (r.temp||0).toFixed(1), e.toFixed(3), cost.toFixed(2)]);
+                    });
+
+                    doc.setFontSize(16); doc.text(`DTEnergy Testing Report: ${dateKey}`, 14, 22);
+                    doc.setFontSize(11); doc.setTextColor(100); 
+                    doc.text(`Device: ${dev.displayName} | Hour Window: ${hour}:00 to ${hour}:59`, 14, 28);
+
+                    hourRows.push([{content: 'HOUR TOTALS', colSpan: 7, styles: {halign: 'right', fontStyle: 'bold'}}, hourTotalE.toFixed(3), hourTotalCost.toFixed(2)]);
+
+                    doc.autoTable({
+                        startY: 35,
+                        head: [["Time", "Device", "Location", "Volt (V)", "Curr (A)", "Pwr (W)", "Temp (C)", "Energy (kWh)", "Cost (NGN)"]],
+                        body: hourRows,
+                        theme: 'striped',
+                        headStyles: { fillColor: [10, 36, 99] },
+                        footStyles: { fillColor: [233, 236, 239], textColor: [0,0,0], fontStyle: 'bold' }
+                    });
                 }
             }
         }
-
-        if (dayRows.length > 0) {
-            if (pageAdded) doc.addPage(); // 1 Day max per page
-            pageAdded = true;
-
-            doc.setFontSize(16); doc.text(`DTEnergy Daily Report: ${k}`, 14, 22);
-            doc.setFontSize(11); doc.setTextColor(100); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
-
-            dayRows.push([{content: 'DAILY TOTALS', colSpan: 7, styles: {halign: 'right', fontStyle: 'bold'}}, dayTotalE.toFixed(3), dayTotalCost.toFixed(2)]);
-
-            doc.autoTable({
-                startY: 35,
-                head: [["Time", "Device", "Location", "Volt (V)", "Curr (A)", "Pwr (W)", "Temp (C)", "Energy (kWh)", "Cost (NGN)"]],
-                body: dayRows,
-                theme: 'striped',
-                headStyles: { fillColor: [10, 36, 99] },
-                footStyles: { fillColor: [233, 236, 239], textColor: [0,0,0], fontStyle: 'bold' }
-            });
-        }
     }
-
     if(!hasData) return showAlert("No data found.", "warning", "export-alert");
-    doc.save(`DTEnergy_Hourly_${start}_to_${end}.pdf`);
+    doc.save(`DTEnergy_MinuteData_${start}_to_${end}.pdf`);
 }
         
 // Ensure default dates for CSV export (Last 7 days)
@@ -1936,36 +1944,26 @@ function loadChartDevices() {
     renderWeeklyChart();
 }
 
-// FIX D: historyListContainer was never populated — added this function
+// =======================================================
+// 3. OVERLAPPING MINUTE CHART ENGINE (60-Min Window)
+// =======================================================
 function renderHistoryList() {
     const container = document.getElementById("historyListContainer");
     if (!container) return;
-    const history = JSON.parse(localStorage.getItem("energy_history") || "{}");
-    const devId = document.getElementById("chartDeviceSelect")?.value || "ALL";
-
-    // Collect all unique week start dates from history
-    const allDates = new Set();
-    const targetDevices = devId === "ALL" ? Object.keys(history) : [devId];
-    targetDevices.forEach(id => { if (history[id]) Object.keys(history[id]).forEach(d => allDates.add(d)); });
-
-    if (!allDates.size) { container.innerHTML = '<p style="color:var(--gray-500); font-size:13px;">No history yet.</p>'; return; }
-
-    // Group dates into weeks and list them
-    const sorted = [...allDates].sort().reverse();
-    const weeks = [];
-    const seen = new Set();
-    sorted.forEach(dateStr => {
-        const d = new Date(dateStr);
-        const weekStart = new Date(d); weekStart.setDate(d.getDate() - d.getDay() + 1);
-        const key = weekStart.toISOString().split("T")[0];
-        if (!seen.has(key)) { seen.add(key); weeks.push({ key, label: weekStart.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' – ' + new Date(weekStart.getTime() + 6*86400000).toLocaleDateString('en-US', {month:'short', day:'numeric'}) }); }
-    });
-
+    
+    // Instead of weeks, the side menu now navigates by Hours (0 = Current Hour, 1 = 1 Hour Ago)
     let html = "";
-    weeks.slice(0, 12).forEach((w, i) => {
-        html += `<div class="history-item${i === currentChartOffset ? ' active' : ''}" onclick="jumpToWeek(${i})">${w.label}</div>`;
-    });
-    container.innerHTML = html || '<p style="color:var(--gray-500); font-size:13px;">No history yet.</p>';
+    for (let i = 0; i < 12; i++) {
+        let d = new Date();
+        d.setHours(d.getHours() - i);
+        let timeLabel = i === 0 ? "Current Hour" : `${i} Hour(s) Ago`;
+        let exactLabel = `${d.toLocaleDateString('en-US', {month:'short', day:'numeric'})} - ${String(d.getHours()).padStart(2,'0')}:00`;
+        
+        html += `<div class="history-item${i === currentChartOffset ? ' active' : ''}" onclick="jumpToWeek(${i})">
+            <strong>${timeLabel}</strong><br><span style="font-size:11px; color:var(--gray-600);">${exactLabel}</span>
+        </div>`;
+    }
+    container.innerHTML = html;
 }
 
 function jumpToWeek(offset) {
@@ -1980,7 +1978,7 @@ function changeWeek(direction) {
     if (currentChartOffset < 0) currentChartOffset = 0;
     document.getElementById("nextWeekBtn").disabled = (currentChartOffset === 0);
     renderWeeklyChart();
-    renderHistoryList(); // FIX L: keep sidebar week list in sync with active chart
+    renderHistoryList(); 
 }
 
 function renderWeeklyChart() {
@@ -1990,82 +1988,80 @@ function renderWeeklyChart() {
     const devId = document.getElementById("chartDeviceSelect").value;
     const history = JSON.parse(localStorage.getItem("energy_history") || "{}");
 
-    const today = new Date();
-    today.setDate(today.getDate() - (currentChartOffset * 7));
+    // Calculate the target hour based on the offset
+    const targetDate = new Date();
+    targetDate.setHours(targetDate.getHours() - currentChartOffset);
+    const dateStr = targetDate.toISOString().split("T")[0];
+    const hourStr = String(targetDate.getHours()).padStart(2, '0');
+
+    // Generate exactly 60 labels (00 to 59 minutes)
     const labels = [];
-    const energyData = [];
-    const powerData = [];
+    for(let i = 0; i < 60; i++) labels.push(`${hourStr}:${String(i).padStart(2, '0')}`);
 
-    // Map the last 7 days ending at the current offset
-    for(let i=6; i>=0; i--) {
-        const d = new Date(today);
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split("T")[0];
-        labels.push(d.toLocaleDateString('en-US', {weekday:'short', month:'numeric', day:'numeric'}));
+    const datasets = [];
+    const colors = ['#2dc653', '#3e92cc', '#ffb400', '#d64045', '#8a2be2']; // Colors for the 5 relays
+    const devs = loadDevices();
 
-        let eSum = 0, pSum = 0, count = 0;
+    if (devId === "ALL") {
+        // OVERLAPPING MODE: Loop through every device and draw a separate colored line for each
+        devs.forEach((dev, idx) => {
+            const color = colors[idx % colors.length];
+            const pData = [];
+            let hasData = false;
 
-        if (devId === "ALL") {
-            for(const id in history) {
-                if(history[id][dateStr]) {
-                    eSum += history[id][dateStr].energy || 0;
-                    pSum += history[id][dateStr].power || 0;
-                    count++;
+            for(let i = 0; i < 60; i++) {
+                let minStr = String(i).padStart(2, '0');
+                let timeKey = `${hourStr}:${minStr}`;
+                
+                if(history[dev.deviceId] && history[dev.deviceId][dateStr] && history[dev.deviceId][dateStr][timeKey]) {
+                    pData.push(history[dev.deviceId][dateStr][timeKey].power || 0);
+                    hasData = true;
+                } else {
+                    pData.push(0);
                 }
             }
-        } else {
-            if(history[devId] && history[devId][dateStr]) {
-                eSum += history[devId][dateStr].energy || 0;
-                pSum += history[devId][dateStr].power || 0;
-                count++;
+            
+            // Only draw the line if this specific device actually has readings this hour
+            if (hasData) {
+                datasets.push({ 
+                    label: `${dev.displayName} Power (W)`, 
+                    data: pData, type: 'line', 
+                    borderColor: color, backgroundColor: color + '22',
+                    fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2, yAxisID: 'y1' 
+                });
+            }
+        });
+    } else {
+        // ISOLATED MODE: Standard Bar (Energy) + Line (Power) for a single device
+        let eData = [], pData = [];
+        for(let i = 0; i < 60; i++) {
+            let minStr = String(i).padStart(2, '0');
+            let timeKey = `${hourStr}:${minStr}`;
+            
+            if(history[devId] && history[devId][dateStr] && history[devId][dateStr][timeKey]) {
+                eData.push(history[devId][dateStr][timeKey].energy || 0);
+                pData.push(history[devId][dateStr][timeKey].power || 0);
+            } else {
+                eData.push(0); pData.push(0);
             }
         }
-        energyData.push(eSum);
-        powerData.push(count > 0 ? (pSum/count) : 0);
+        datasets.push({ label: 'Energy (kWh)', data: eData, type: 'bar', backgroundColor: 'rgba(45, 198, 83, 0.6)', yAxisID: 'y' });
+        datasets.push({ label: 'Power (W)', data: pData, type: 'line', borderColor: '#3e92cc', fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y1' });
     }
 
-    document.getElementById("currentChartDateRange").innerText = `${labels[0]} - ${labels[6]}`;
+    document.getElementById("currentChartDateRange").innerText = `${dateStr} | Minute View (${hourStr}:00 - ${hourStr}:59)`;
 
     if(chartInstance) chartInstance.destroy();
     chartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Energy (kWh)',
-                    data: energyData,
-                    backgroundColor: 'rgba(45, 198, 83, 0.6)',
-                    borderColor: '#2dc653',
-                    borderWidth: 1,
-                    yAxisID: 'y'
-                },
-                {
-                    // FIX E: line was invisible — backgroundColor was solid blue (filled area), fill must be false,
-                    // and pointRadius added so data points are visible
-                    label: 'Avg Power (W)',
-                    data: powerData,
-                    type: 'line',
-                    borderColor: '#3e92cc',
-                    backgroundColor: 'rgba(62,146,204,0.15)',
-                    fill: false,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                    borderWidth: 2,
-                    yAxisID: 'y1'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
+        type: 'line',
+        data: { labels: labels, datasets: datasets },
+        options: { 
+            responsive: true, maintainAspectRatio: false, 
             interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { display: true, position: 'top' } },
-            scales: {
-                y:  { type: 'linear', display: true, position: 'left',  title: { display: true, text: 'Energy (kWh)' }, beginAtZero: true },
-                y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Power (W)'    }, beginAtZero: true, grid: { drawOnChartArea: false } }
-            }
+            scales: { 
+                y: { display: devId !== "ALL", position: 'left', beginAtZero: true }, 
+                y1: { display: true, position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } } 
+            } 
         }
     });
 }
