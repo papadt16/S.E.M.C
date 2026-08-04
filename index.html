@@ -547,19 +547,7 @@
                     </div>
                     <button type="button" class="btn btn-primary" onclick="setThresholds()">Save All Settings</button>
                  </form>
-                 <div class="card settings-section" style="margin-top: 20px;">
-                     <div class="settings-header"><span class="settings-icon">🔑</span><h3 class="settings-title">Screen Keypad PIN</h3></div>
-                     <div class="settings-grid">
-                         <div class="form-group">
-                             <label class="form-label">New 4-8 Digit PIN</label>
-                             <div class="input-group">
-                                 <input type="text" id="newKeypadPin" class="form-input" placeholder="e.g. 1234 (only characters between 1-4)" inputmode="numeric" minlength="4" maxlength="8" pattern="[1-4]{4,8}" oninput="this.value = this.value.replace(/[^1-4]/g, '').slice(0, 8);"/>
-                             </div>
-                             <button type="button" class="btn btn-warning" onclick="resetKeypadPin()" style="margin-top: 10px;">Update PIN</button>
-                             <div id="pin-alert" style="display:none; margin-top: 10px;" class="alert"></div>
-                         </div>
-                     </div>
-                 </div>
+                
                  <div class="card settings-section">
                     <div class="settings-header"><span class="settings-icon" style="color: var(--danger);">⚠️</span><h3 class="settings-title" style="color: var(--danger);">Factory Reset</h3></div>
                     <p style="margin-top: 10px; margin-bottom: 20px;">Reset all settings to default and clear energy data. This action is irreversible.</p>
@@ -577,6 +565,16 @@
                     <button class="btn btn-primary" style="display:flex; align-items:center; gap:8px;" onclick="openInsightsModal()">
                         <span style="font-size:16px;">🧠</span> Smart Insights
                     </button>
+                </div>
+
+                <div class="card" style="margin-bottom: 25px;">
+                    <div class="card-header">
+                        <h3 class="card-title" style="color: var(--danger);">⚠️ SYSTEM ALERTS & FAULTS</h3>
+                        <button class="btn btn-warning" style="padding:4px 8px; font-size:12px; color:black;" onclick="clearFaults()">Clear Log</button>
+                    </div>
+                    <div id="faultsContainer" style="max-height: 250px; overflow-y: auto;">
+                        <p style="color: var(--gray-500); font-size: 13px; padding: 20px;">No system faults recorded.</p>
+                    </div>
                 </div>
                 
                 <div class="card">
@@ -811,7 +809,7 @@ function showPage(page) {
 
     if (page === 'account') document.getElementById('account-balance').innerHTML = document.getElementById('balance').innerHTML; // FIX 11: use innerHTML to preserve the ₦ unit span
     if (page === "sessions") { loadSessionsLocal(); renderSessionsTable(); renderTodaysSessions(); }
-    if (page === "reports") { loadChartDevices(); } // FIX J: generateSmartInsights only runs when user clicks "Smart Insights" button
+    if (page === "reports") { loadChartDevices(); if(typeof renderFaults === 'function') renderFaults(); } 
     if (page === "control") { loadControlLocations(); }
     if (page === "all-devices") { renderAllDevicesGrid(); }
     closeSidebar();
@@ -824,10 +822,6 @@ function n(v, fallback = null) {
   const x = Number(v);
   return Number.isFinite(x) ? x : fallback;
 }
-
-// ----------------------------------------------------
-// NEW HISTORY LOGIC (V, I, P, E)
-// ----------------------------------------------------
 
 // =======================================================
 // 1. MINUTE-BY-MINUTE METRICS ENGINE (TESTING MODE)
@@ -871,21 +865,113 @@ function handleTelemetry(data) {
    window.lastTelemetryTs = Date.now();
    window.latestBalanceValue = Number(data.balance ?? 0);
     
-   // Trigger the new minute-by-minute storage
    if (data.energy !== undefined) storeMinuteMetrics(data.deviceId || selectedDeviceId, data);
     
    if (typeof updateAccountSection === "function") updateAccountSection(data);
    if (typeof updateControlSection === "function") updateControlSection(data);
    
-   if (data.overVoltageThreshold !== undefined) document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
-   if (data.overCurrentThreshold !== undefined) document.getElementById("overCurrent").value = Number(data.overCurrentThreshold);
-   if (data.minimumBalance !== undefined) document.getElementById("minBalance").value = Number(data.minimumBalance);
-   if (data.costPerKWh !== undefined) document.getElementById("costPerKWh").value = Number(data.costPerKWh);
+   // FIX: Only overwrite values if the user is NOT actively typing inside the input box!
+   if (data.overVoltageThreshold !== undefined && document.activeElement !== document.getElementById("overVoltage")) document.getElementById("overVoltage").value = Number(data.overVoltageThreshold);
+   if (data.overCurrentThreshold !== undefined && document.activeElement !== document.getElementById("overCurrent")) document.getElementById("overCurrent").value = Number(data.overCurrentThreshold);
+   if (data.minimumBalance !== undefined && document.activeElement !== document.getElementById("minBalance")) document.getElementById("minBalance").value = Number(data.minimumBalance);
+   if (data.costPerKWh !== undefined && document.activeElement !== document.getElementById("costPerKWh")) document.getElementById("costPerKWh").value = Number(data.costPerKWh);
          
+   // Process and log any hardware faults
+   if (typeof checkAndLogFaults === "function") checkAndLogFaults(data);
+
    const now = new Date();
    const timeStr = now.toLocaleTimeString();
    if (document.getElementById('update-timestamp')) document.getElementById('update-timestamp').textContent = `Last updated: ${timeStr}`;
    if (document.getElementById('update-status')) document.getElementById('update-status').textContent = `Last Update: ${timeStr}`;
+}
+
+// =======================================================
+// FAULT TRACKING & NOTIFICATION ENGINE
+// =======================================================
+function checkAndLogFaults(data) {
+    let faultReason = null;
+    const v = Number(data.voltage || 0);
+    const c = Number(data.current || 0);
+    const t = Number(data.temperature || 0);
+    const ov = Number(data.overVoltageThreshold || 260);
+    const oc = Number(data.overCurrentThreshold || 10);
+    const devName = data.displayName || data.deviceId;
+
+    if (t >= 65.0) faultReason = `Temperature Alert (${t.toFixed(1)}°C)`;
+    else if (v > 0 && v > ov) faultReason = `Over-Voltage (${v.toFixed(1)}V)`;
+    else if (c > 0 && c > oc) faultReason = `Over-Current (${c.toFixed(2)}A)`;
+
+    if (faultReason) {
+        let faults = JSON.parse(localStorage.getItem('dt_system_faults') || "[]");
+        const lastFault = faults[0];
+        
+        // Prevent duplicate spamming (only log once every 60 seconds per fault)
+        if (!lastFault || lastFault.reason !== faultReason || (Date.now() - lastFault.ts) > 60000) {
+            faults.unshift({ reason: faultReason, device: devName, time: new Date().toLocaleString(), ts: Date.now() });
+            if (faults.length > 50) faults.pop(); // Keep the list clean
+            localStorage.setItem('dt_system_faults', JSON.stringify(faults));
+            
+            if (document.getElementById('reports-section').classList.contains('active')) renderFaults();
+        }
+        cancelSessionsOnFault(data.deviceId, faultReason);
+    }
+}
+
+function cancelSessionsOnFault(deviceId, reason) {
+    let changed = false;
+    const today = getTodayWdayNum();
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+
+    sessionsStore.forEach(s => {
+        if (s.deviceId === deviceId && s.days && s.days.includes(today)) {
+            const startMin = parseHHMMToMinutes(s.startTime);
+            const dur = Number(s.duration) || 0;
+            // If the fault happened DURING the active session schedule
+            if (startMin !== null && nowMin >= startMin && nowMin < (startMin + dur)) {
+                if (!s.cancelledDueToFault) {
+                    s.cancelledDueToFault = reason;
+                    changed = true;
+                }
+            }
+        }
+    });
+
+    if (changed) {
+        saveSessionsLocal();
+        if (document.getElementById('sessions-section').classList.contains('active')) renderTodaysSessions();
+    }
+}
+
+function renderFaults() {
+    const container = document.getElementById("faultsContainer");
+    if (!container) return;
+    const faults = JSON.parse(localStorage.getItem('dt_system_faults') || "[]");
+    
+    if (faults.length === 0) {
+        container.innerHTML = '<p style="color: var(--gray-500); font-size: 13px; padding: 20px;">No system faults recorded.</p>';
+        return;
+    }
+    
+    let html = '<div style="display:flex; flex-direction:column; gap:10px; padding: 15px;">';
+    faults.forEach(f => {
+        html += `
+        <div style="border-left: 4px solid var(--danger); background: var(--light); padding: 10px; border-radius: 4px; border: 1px solid var(--gray-200);">
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <strong style="color:var(--danger); font-size:14px;">⚠️ ${f.reason}</strong>
+                <span style="font-size:12px; color:var(--gray-600);">${f.time}</span>
+            </div>
+            <div style="font-size:13px; color:var(--gray-800);"><strong>Devices Affected:</strong> ${escapeHtml(f.device)}</div>
+        </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function clearFaults() {
+    if(confirm("Clear all recorded faults?")) {
+        localStorage.removeItem('dt_system_faults');
+        renderFaults();
+    }
 }
         
 // FIX 7: updateAccountSection was called but never defined. Added here.
@@ -1398,6 +1484,12 @@ function renderTodaysSessions(){
     if (s.isActive) badge = `<span class="badge badge-active">ACTIVE NOW</span>`;
     if (s.isEnded) badge = `<span class="badge badge-ended">ENDED</span>`;
 
+    let metaExtra = "";
+    if (s.cancelledDueToFault) {
+        badge = `<span class="badge badge-ended" style="background:var(--danger)">CANCELLED</span>`;
+        metaExtra = `<div style="color:var(--danger); font-size:12px; font-weight:bold; margin-top:4px;">⚠️ Fault: ${s.cancelledDueToFault}</div>`;
+    }
+
     return `
       <div class="session-row">
         <div class="left">
@@ -1406,11 +1498,12 @@ function renderTodaysSessions(){
             <span style="margin-left:8px; color:#6c757d;">(${s.duration} min)</span>
           </div>
           <div class="tiny">Session ID: ${escapeHtml(s.id)}</div>
+          ${metaExtra}
         </div>
 
         <div class="right">
           ${badge}
-          <div class="tiny">Device: <b>${escapeHtml(s.deviceId)}</b></div>
+          <div class="tiny">Devices Affected: <b>${escapeHtml(s.deviceName || s.deviceId)}</b></div>
         </div>
       </div>
     `;
@@ -1784,7 +1877,7 @@ async function generateSmartInsights() {
     `;
 
   try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contents: [{ parts: [{ text: aiPrompt }] }] })
         });
