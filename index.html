@@ -2071,14 +2071,19 @@ function pushSessionsToESP() {
         showAlert("MQTT not connected.", "danger", "sessions-alert");
         return;
     }
-    const sessionsByDevice = {};
-    sessionsStore.forEach(s => {
-        if (!sessionsByDevice[s.deviceId]) sessionsByDevice[s.deviceId] = [];
-        sessionsByDevice[s.deviceId].push(s);
+    
+    // Get all registered devices so we don't skip any
+    const devices = loadDevices();
+    
+    // Loop through EVERY device to ensure they receive an update
+    devices.forEach(dev => {
+        // Filter sessions belonging only to this specific device
+        const deviceSessions = sessionsStore.filter(s => s.deviceId === dev.deviceId);
+        
+        // Publish the array. If the user deleted the last session, this publishes an empty array '[]'.
+        // The ESP32 receives this empty array and correctly wipes the schedule memory for this relay!
+        mqttClient.publish(`smart_socket/${dev.deviceId}/sessions/set`, JSON.stringify(deviceSessions));
     });
-    for (const [deviceId, sessions] of Object.entries(sessionsByDevice)) {
-        mqttClient.publish(`smart_socket/${deviceId}/sessions/set`, JSON.stringify(sessions));
-    }
 }
 
 function clearAllSessions() {
