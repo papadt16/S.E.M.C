@@ -621,6 +621,7 @@
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                         <button class="btn btn-success" onclick="exportToCSV()">📊 Download CSV</button>
                         <button class="btn btn-danger" onclick="exportToPDF()">📄 Download PDF</button>
+                        <button class="btn btn-primary" onclick="exportToWord()" style="background-color: #2b579a; border-color: #2b579a;">📝 Download Word</button>
                         <button class="btn btn-warning" style="color: black;" onclick="exportChartToImage()">🖼️ Download Chart</button>
                     </div>
                     <div id="export-alert" class="alert" style="display:none; margin-top: 15px;"></div>
@@ -1230,7 +1231,7 @@ function updateControlSection(data) {
 // FIX 2: Duplicate renderControlGrid removed here. Authoritative version kept below near loadControlLocations.
 
 // =======================================================
-// 2. EXPORTS (MINUTE RESOLUTION + 60-ROW PDF PAGING)
+// 2. EXPORTS (MINUTE RESOLUTION + MS WORD INTEGRATION)
 // =======================================================
 function exportToCSV() {
     const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
@@ -1248,21 +1249,25 @@ function exportToCSV() {
         let k = d.toISOString().split('T')[0];
         for (let id in hist) {
             if(hist[id][k]) {
-                // Sort the minutes chronologically
                 let times = Object.keys(hist[id][k]).sort();
                 for (let hhmm of times) {
                     found = true; let r = hist[id][k][hhmm];
                     let dev = devs.find(x=>x.deviceId===id) || {displayName: id, location:"Unassigned"};
-                    let e = r.energy||0; let cost = e * rate;
-                    totalE += e; totalCost += cost;
-                    csv += `${k},${hhmm},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${(r.power||0).toFixed(1)},${(r.temp||0).toFixed(1)},${e.toFixed(3)},${cost.toFixed(2)}\n`;
+                    
+                    // MATH FIX: Calculate true interval energy based on the active power for this exact minute
+                    let p = r.power || 0;
+                    let consumedEnergy = (p / 1000) / 60; 
+                    let cost = consumedEnergy * rate;
+                    
+                    totalE += consumedEnergy; totalCost += cost;
+                    csv += `${k},${hhmm},${id},${dev.displayName},${dev.location},${(r.voltage||0).toFixed(1)},${(r.current||0).toFixed(2)},${p.toFixed(1)},${(r.temp||0).toFixed(1)},${consumedEnergy.toFixed(5)},${cost.toFixed(2)}\n`;
                 }
             }
         }
     }
     if(!found) return showAlert("No data found.", "warning", "export-alert");
     
-    csv += `\n,,,,,,,,TOTALS:,${totalE.toFixed(3)} kWh,${totalCost.toFixed(2)} NGN\n`;
+    csv += `\n,,,,,,,,TOTALS:,${totalE.toFixed(5)} kWh,${totalCost.toFixed(2)} NGN\n`;
     const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); 
     a.download = `Minute_Report_${start}_to_${end}.csv`;
@@ -1287,17 +1292,15 @@ function exportToPDF() {
         
         for (let id in hist) {
             if(hist[id][dateKey]) {
-                // Group readings by Hour so each page holds exactly 60 minutes
                 let hoursObj = {};
                 for (let hhmm in hist[id][dateKey]) {
-                    let hour = hhmm.split(':')[0]; // Extract the "HH"
+                    let hour = hhmm.split(':')[0]; 
                     if (!hoursObj[hour]) hoursObj[hour] = [];
                     hoursObj[hour].push({ time: hhmm, data: hist[id][dateKey][hhmm] });
                 }
 
                 let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unassigned"};
                 
-                // For every single hour for this device, create a brand new page
                 for (let hour in hoursObj) {
                     hasData = true;
                     if (pageAdded) doc.addPage();
@@ -1306,19 +1309,21 @@ function exportToPDF() {
                     let hourRows = [];
                     let hourTotalE = 0, hourTotalCost = 0;
 
-                    // Sort minutes chronologically 00 -> 59
                     hoursObj[hour].sort((a,b) => a.time.localeCompare(b.time)).forEach(record => {
                         let r = record.data;
-                        let e = r.energy||0; let cost = e * rate;
-                        hourTotalE += e; hourTotalCost += cost;
-                        hourRows.push([record.time, dev.displayName, dev.location, (r.voltage||0).toFixed(1), (r.current||0).toFixed(2), (r.power||0).toFixed(1), (r.temp||0).toFixed(1), e.toFixed(3), cost.toFixed(2)]);
+                        let p = r.power || 0;
+                        let consumedEnergy = (p / 1000) / 60; 
+                        let cost = consumedEnergy * rate;
+                        hourTotalE += consumedEnergy; hourTotalCost += cost;
+                        
+                        hourRows.push([record.time, dev.displayName, dev.location, (r.voltage||0).toFixed(1), (r.current||0).toFixed(2), p.toFixed(1), (r.temp||0).toFixed(1), consumedEnergy.toFixed(5), cost.toFixed(2)]);
                     });
 
                     doc.setFontSize(16); doc.text(`DTEnergy Testing Report: ${dateKey}`, 14, 22);
                     doc.setFontSize(11); doc.setTextColor(100); 
                     doc.text(`Device: ${dev.displayName} | Hour Window: ${hour}:00 to ${hour}:59`, 14, 28);
 
-                    hourRows.push([{content: 'HOUR TOTALS', colSpan: 7, styles: {halign: 'right', fontStyle: 'bold'}}, hourTotalE.toFixed(3), hourTotalCost.toFixed(2)]);
+                    hourRows.push([{content: 'HOUR TOTALS', colSpan: 7, styles: {halign: 'right', fontStyle: 'bold'}}, hourTotalE.toFixed(5), hourTotalCost.toFixed(2)]);
 
                     doc.autoTable({
                         startY: 35,
@@ -1334,6 +1339,73 @@ function exportToPDF() {
     }
     if(!hasData) return showAlert("No data found.", "warning", "export-alert");
     doc.save(`DTEnergy_MinuteData_${start}_to_${end}.pdf`);
+}
+
+function exportToWord() {
+    const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
+    if(!start || !end) return showAlert("Select both dates.", "danger", "export-alert");
+    
+    const hist = JSON.parse(localStorage.getItem("energy_history")||"{}");
+    const rate = Number(document.getElementById("costPerKWh")?.value || 200);
+    const devs = loadDevices();
+
+    // Native Microsoft Word XML/HTML wrapper
+    let html = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>";
+    html += "<head><meta charset='utf-8'><title>Energy Report</title>";
+    html += "<style>table { border-collapse: collapse; width: 100%; margin-bottom: 20px; font-family: Arial, sans-serif; font-size: 11px; } th, td { border: 1px solid #000000; padding: 5px; text-align: center; } th { background-color: #0a2463; color: white; }</style>";
+    html += "</head><body>";
+    html += `<h2 style="text-align: center; font-family: Arial; color: #0a2463;">DTEnergy Smart System Report</h2>`;
+    html += `<p style="text-align: center; font-family: Arial;">Date Range: ${start} to ${end}</p>`;
+
+    let hasData = false;
+    let d1 = new Date(start), d2 = new Date(end);
+    for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+        let dateKey = d.toISOString().split('T')[0];
+        
+        for (let id in hist) {
+            if(hist[id][dateKey]) {
+                let hoursObj = {};
+                for (let hhmm in hist[id][dateKey]) {
+                    let hour = hhmm.split(':')[0]; 
+                    if (!hoursObj[hour]) hoursObj[hour] = [];
+                    hoursObj[hour].push({ time: hhmm, data: hist[id][dateKey][hhmm] });
+                }
+
+                let dev = devs.find(x=>x.deviceId===id) || {displayName:id, location:"Unassigned"};
+                
+                for (let hour in hoursObj) {
+                    hasData = true;
+                    let hourTotalE = 0, hourTotalCost = 0;
+
+                    html += `<h3 style="font-family: Arial; margin-top: 20px;">Date: ${dateKey} | Device: ${dev.displayName} | Hour Window: ${hour}:00 to ${hour}:59</h3>`;
+                    html += "<table><thead><tr><th>Time</th><th>Device</th><th>Location</th><th>Volt (V)</th><th>Curr (A)</th><th>Pwr (W)</th><th>Temp (C)</th><th>Energy (kWh)</th><th>Cost (NGN)</th></tr></thead><tbody>";
+
+                    hoursObj[hour].sort((a,b) => a.time.localeCompare(b.time)).forEach(record => {
+                        let r = record.data;
+                        let p = r.power || 0;
+                        let consumedEnergy = (p / 1000) / 60; 
+                        let cost = consumedEnergy * rate;
+                        hourTotalE += consumedEnergy; hourTotalCost += cost;
+                        
+                        html += `<tr><td>${record.time}</td><td>${dev.displayName}</td><td>${dev.location}</td><td>${(r.voltage||0).toFixed(1)}</td><td>${(r.current||0).toFixed(2)}</td><td>${p.toFixed(1)}</td><td>${(r.temp||0).toFixed(1)}</td><td>${consumedEnergy.toFixed(5)}</td><td>${cost.toFixed(2)}</td></tr>`;
+                    });
+
+                    html += `<tr style="font-weight: bold; background-color: #f0f2f5;"><td colspan="7" style="text-align: right;">HOUR TOTALS:</td><td>${hourTotalE.toFixed(5)}</td><td>${hourTotalCost.toFixed(2)}</td></tr>`;
+                    // The CSS below explicitly tells MS Word to break the page here
+                    html += "</tbody></table><br clear=all style='mso-special-character:line-break;page-break-before:always'>";
+                }
+            }
+        }
+    }
+    
+    html += "</body></html>";
+
+    if(!hasData) return showAlert("No data found.", "warning", "export-alert");
+
+    const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); 
+    a.download = `DTEnergy_Word_Report_${start}_to_${end}.doc`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 function exportChartToImage() {
